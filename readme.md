@@ -694,7 +694,7 @@ for session in report['sessions'][:3]:  # Visa 3 senaste
 "
 ```
 
-### Backup-underhåll ✨ **NYT**
+### Backup-underhåll ✨ **NYTT**
 ```bash
 # Kontrollera backup-policies
 grep -A 10 "SESSION_BACKUP_POLICIES" cleanup.py
@@ -771,27 +771,8 @@ python3 cleanup.py --emergency --verbose
 ## 🔮 Utvecklingsförslag (Fas 5+)
 
 ### **Fas 5: Avancerade funktioner**
-- **SMHI väder-integration** för lokala varningar
-- **Multi-region support** för flera P4-frekvenser
-- **Webinterface** för fjärrkonfiguration  
-- **Mobile app** för push-notifikationer
-- **MQTT/IoT** integration för smart home
-- **Machine learning förbättringar** av transkriptionskvalitet
-
-### **Fas 6: Produktifiering**
-- **Custom PCB** för integrerad Pi + RTL-SDR + display
-- **Embedded Linux** för snabbare start
-- **Industrial grade** hårdvara  
-- **Solar power** självförsörjning
-- **Debian package** för enkel installation
-- **Commercial backup-lösningar** för företag
-
-### **Fas 7: Skalning**
-- **Multi-SDR support** för regionstäckning  
-- **Distributed deployment** för större geografisk täckning
-- **Cloud backup** av kritiska inspelningar (med offline-prioritet)
-- **Centralized management** för flera enheter
-- **Advanced analytics** av VMA-mönster
+- **SMHI väder-integration** för lokala varningar och vardaglig användning
+- ** Ev webintegration med VMA från API istället och RDS VMA som fallback
 
 ---
 
