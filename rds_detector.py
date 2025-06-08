@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RDS Event Detector - Updated with 15s Filter
+RDS Event Detector - Updated with VMA Support + VMA START Force Fix
 OVERWRITES: ~/rds_logger3/rds_detector.py
 """
 
@@ -10,7 +10,7 @@ import threading
 import time
 from enum import Enum
 from datetime import datetime, timedelta
-from config import EVENT_TIMEOUT_SECONDS, MIN_EVENT_DURATION_SECONDS
+from config import EVENT_TIMEOUT_SECONDS, MIN_EVENT_DURATION_SECONDS, MIN_VMA_DURATION_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +30,19 @@ def is_start_event(event_type: EventType) -> bool:
 def is_end_event(event_type: EventType) -> bool:
     return event_type.value.endswith('_end') or event_type == EventType.TRAFFIC_TIMEOUT
 
+def is_vma_event(event_type: EventType) -> bool:
+    """Check if event is VMA-related (should bypass timeout)"""
+    return 'vma' in event_type.value.lower()
+
 class RDSEventDetector:
     """
-    RDS Event Detector with Emergency Stop System
+    RDS Event Detector with Emergency Stop System + VMA Support
     
-    FILTER 1: Duration - Events must be ≥15 seconds (UPDATED from 30s)
+    FILTER 1: Duration - Events must be ≥15 seconds (Traffic) or ≥10 seconds (VMA)
     FILTER 2: RDS Continuity - Must have RDS data every 30 seconds  
     EMERGENCY: Maximum 10 minutes - Force stop runaway recordings
     
-    CRITICAL: End events are NEVER suppressed to ensure recordings stop!
+    CRITICAL: VMA events NEVER suppressed by timeout - they are always critical!
     """
     
     def __init__(self, event_callback=None):
@@ -52,9 +56,12 @@ class RDSEventDetector:
         # Track last valid TA state (ignoring nulls)
         self.last_valid_ta_state = None
         
-        # DUAL FILTER SYSTEM - UPDATED
+        # DUAL FILTER SYSTEM - UPDATED with VMA support
         self.current_traffic_start_time = None
-        self.min_traffic_duration_seconds = MIN_EVENT_DURATION_SECONDS  # Now from config (15s)
+        self.min_traffic_duration_seconds = MIN_EVENT_DURATION_SECONDS  # 15s for traffic
+        
+        # VMA event type tracking
+        self.current_event_type = 'traffic'  # Default to traffic
         
         # RDS CONTINUITY TRACKING
         self.rds_timestamps_during_event = []
@@ -71,11 +78,12 @@ class RDSEventDetector:
         self.continuity_filtered = 0
         self.timeout_events = 0
         
-        logger.info("RDSEventDetector initialized with EMERGENCY STOP SYSTEM")
-        logger.info(f"Filter 1 - Minimum duration: {self.min_traffic_duration_seconds} seconds (UPDATED)")
+        logger.info("RDSEventDetector initialized with VMA SUPPORT + VMA TIMEOUT BYPASS")
+        logger.info(f"Filter 1 - Traffic duration: {self.min_traffic_duration_seconds} seconds")
+        logger.info(f"Filter 1 - VMA duration: {MIN_VMA_DURATION_SECONDS} seconds")
         logger.info(f"Filter 2 - RDS continuity: Max {self.max_rds_gap_seconds}s gap")
         logger.info(f"EMERGENCY - Maximum duration: {self.max_traffic_duration_seconds} seconds (10 min)")
-        logger.info("CRITICAL: End events bypass timeout to ensure recordings stop")
+        logger.info("CRITICAL: VMA events bypass timeout to ensure they are NEVER suppressed")
     
     def process_rds_data(self, rds_data: dict):
         """Process RDS data and detect events"""
@@ -125,9 +133,23 @@ class RDSEventDetector:
             self.last_valid_ta_state = current_ta
     
     def _handle_traffic_start(self):
-        """Handle traffic start with emergency timer"""
+        """Handle traffic start with emergency timer + VMA event type tracking"""
+        
+        # CRITICAL FIX: Skip traffic events if PTY indicates VMA is active
+        current_pty = self.current_state.get('pty')
+        if current_pty in [30, 31]:
+            logger.info(f"🚨 Skipping traffic start - PTY {current_pty} indicates VMA is active")
+            logger.info("🚨 VMA events take priority over TA-based traffic detection")
+            return
+        
         self.current_traffic_start_time = datetime.now()
         self.rds_timestamps_during_event = [self.current_traffic_start_time]
+        
+        # Track event type for duration filtering
+        if self.current_state.get('pty') in [30, 31]:
+            self.current_event_type = 'vma'
+        else:
+            self.current_event_type = 'traffic'
         
         # START EMERGENCY TIMER
         self._start_emergency_timer()
@@ -135,7 +157,7 @@ class RDSEventDetector:
         event_type = EventType.TRAFFIC_START
         trigger = "ta_activated"
         
-        logger.info(f"🚦 Traffic start detected: false → true")
+        logger.info(f"🚦 {self.current_event_type.upper()} start detected: false → true")
         logger.info(f"⏱️ Emergency timer started: {self.max_traffic_duration_seconds}s")
         
         # Always trigger start event (recording begins)
@@ -143,7 +165,8 @@ class RDSEventDetector:
             'trigger': trigger,
             'ta_state': True,
             'rds_data': self.current_state.copy(),
-            'start_time': self.current_traffic_start_time.isoformat()
+            'start_time': self.current_traffic_start_time.isoformat(),
+            'event_type': self.current_event_type
         })
     
     def _start_emergency_timer(self):
@@ -185,9 +208,10 @@ class RDSEventDetector:
         self.current_traffic_start_time = None
         self.rds_timestamps_during_event = []
         self.timeout_timer = None
+        self.current_event_type = 'traffic'
     
     def _handle_traffic_end(self):
-        """Handle traffic end with dual filter system"""
+        """Handle traffic end with dual filter system + VMA duration support"""
         # CANCEL EMERGENCY TIMER
         if self.timeout_timer:
             self.timeout_timer.cancel()
@@ -202,15 +226,21 @@ class RDSEventDetector:
             duration = end_time - self.current_traffic_start_time
             duration_seconds = duration.total_seconds()
             
-            logger.info(f"🚦 Traffic end detected: true → false")
+            logger.info(f"🚦 {self.current_event_type.upper()} end detected: true → false")
             logger.info(f"⏱️ Duration: {duration_seconds:.1f} seconds")
             
             # DUAL FILTER CHECK
             filter_reasons = []
             
-            # FILTER 1: Duration check (UPDATED to 15s)
-            if duration_seconds < self.min_traffic_duration_seconds:
-                filter_reasons.append(f"Duration {duration_seconds:.1f}s < minimum {self.min_traffic_duration_seconds}s")
+            # FILTER 1: Duration check - different thresholds for VMA vs Traffic
+            current_event_type = getattr(self, 'current_event_type', 'traffic')
+            if 'vma' in current_event_type.lower():
+                min_duration = MIN_VMA_DURATION_SECONDS
+            else:
+                min_duration = self.min_traffic_duration_seconds
+
+            if duration_seconds < min_duration:
+                filter_reasons.append(f"Duration {duration_seconds:.1f}s < minimum {min_duration}s")
                 self.duration_filtered += 1
             
             # FILTER 2: RDS Continuity check
@@ -236,11 +266,12 @@ class RDSEventDetector:
                     'duration_seconds': duration_seconds,
                     'filtered': True,
                     'filter_reasons': filter_reasons,
-                    'reason': '; '.join(filter_reasons)
+                    'reason': '; '.join(filter_reasons),
+                    'event_type': self.current_event_type
                 }, force=True)  # Force END events through!
             else:
                 # Event passed both filters
-                logger.info(f"✅ DUAL FILTER PASSED - Valid traffic event")
+                logger.info(f"✅ DUAL FILTER PASSED - Valid {self.current_event_type} event")
                 logger.info(f"✅   Duration: {duration_seconds:.1f}s OK")
                 logger.info(f"✅   RDS continuity: OK")
                 
@@ -249,12 +280,14 @@ class RDSEventDetector:
                     'ta_state': False,
                     'rds_data': self.current_state.copy(),
                     'duration_seconds': duration_seconds,
-                    'filtered': False
+                    'filtered': False,
+                    'event_type': self.current_event_type
                 }, force=True)  # Force END events through!
         
         # Reset tracking for next event
         self.current_traffic_start_time = None
         self.rds_timestamps_during_event = []
+        self.current_event_type = 'traffic'
     
     def _check_rds_continuity(self):
         """Check if RDS data was continuous during the event"""
@@ -308,11 +341,12 @@ class RDSEventDetector:
                 
             logger.info(f"🚨 VMA detected: PTY → {curr_pty}")
             
+            # VMA START events MUST force through - they are critical!
             self._trigger_event(event_type, {
                 'trigger': f'pty_{curr_pty}_activated',
                 'pty_code': curr_pty,
                 'rds_data': self.current_state.copy()
-            })
+            }, force=True)  # FORCE VMA START EVENTS THROUGH!
         
         # VMA end detection
         elif prev_pty in [30, 31] and curr_pty not in [30, 31]:
@@ -348,20 +382,23 @@ class RDSEventDetector:
         """
         Trigger an event with timeout protection
         
-        CRITICAL: End events (force=True) bypass timeout to ensure recordings stop!
+        CRITICAL: VMA events and End events bypass timeout to ensure they NEVER get suppressed!
         """
         now = datetime.now()
         
-        # CRITICAL FIX: End events must ALWAYS go through to stop recordings
-        if not force:
-            # Only apply timeout to non-critical events
+        # CRITICAL FIX: VMA events and End events must ALWAYS go through
+        is_critical_event = force or is_vma_event(event_type) or is_end_event(event_type)
+        
+        if not is_critical_event:
+            # Only apply timeout to non-critical events (regular traffic starts)
             if (self.last_event_time and 
                 now - self.last_event_time < self.event_timeout):
                 logger.debug(f"Event {event_type.value} suppressed (timeout)")
                 return
         else:
-            # End events bypass timeout
-            logger.debug(f"Event {event_type.value} forced through (end event)")
+            # Critical events bypass timeout
+            event_priority = "VMA" if is_vma_event(event_type) else "END"
+            logger.debug(f"Event {event_type.value} forced through ({event_priority} event)")
         
         self.last_event_time = now
         self.events_detected += 1
@@ -378,7 +415,8 @@ class RDSEventDetector:
             for reason in filter_reasons:
                 logger.warning(f"🗑️   Reason: {reason}")
         else:
-            logger.info(f"🎯 Event detected: {event_type.value} (trigger: {event_data.get('trigger')})")
+            log_prefix = "🚨" if is_vma_event(event_type) else "🎯"
+            logger.info(f"{log_prefix} Event detected: {event_type.value} (trigger: {event_data.get('trigger')})")
         
         if self.event_callback:
             try:
@@ -410,7 +448,8 @@ class RDSEventDetector:
             'last_event_time': self.last_event_time.isoformat() if self.last_event_time else None,
             'current_ta_state': self.last_valid_ta_state,
             'timeout_seconds': self.event_timeout.total_seconds(),
-            'min_duration_filter': self.min_traffic_duration_seconds,
+            'min_traffic_duration_filter': self.min_traffic_duration_seconds,
+            'min_vma_duration_filter': MIN_VMA_DURATION_SECONDS,
             'max_duration_emergency': self.max_traffic_duration_seconds,
             'max_rds_gap_filter': self.max_rds_gap_seconds
         }

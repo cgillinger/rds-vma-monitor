@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik
+FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik + VMA End Events
 Fil: display_monitor.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/display_monitor.py
 
@@ -8,6 +8,7 @@ IMPLEMENTERAR:
 - 3B: Timestamp-cutoff (visa bara transkript skapade efter systemstart)
 - Hybrid: Session-backup av alla loggar vid startup
 - Förenklad logik: "Vilken txt-fil är nyast?" istället för komplex matchning
+- VMA End Events: Hantera VMA end för korrekt display-växling
 """
 
 import os
@@ -419,10 +420,23 @@ class SimplifiedLogFileMonitor:
                     end = content.find('## ORIGINAL TRANSKRIPTION')
                     result['text'] = content[start:end].strip()
             
+            # VMA-medveten extraktion - leta efter VMA MEDDELANDE
+            if '## VMA MEDDELANDE' in content:
+                start = content.find('## VMA MEDDELANDE')
+                start = content.find('\n', start) + 1
+                start = content.find('\n', start) + 1  # Skip divider
+                end = content.find('\n\n', start)
+                if end > start:
+                    result['text'] = content[start:end].strip()
+                elif '## ORIGINAL TRANSKRIPTION' in content:
+                    # Fallback till där original börjar
+                    end = content.find('## ORIGINAL TRANSKRIPTION')
+                    result['text'] = content[start:end].strip()
+            
             # Extrahera trafikinformation
-            if '## EXTRAHERAD TRAFIKINFORMATION' in content:
+            if '## EXTRAHERAD' in content:
                 info = {}
-                section_start = content.find('## EXTRAHERAD TRAFIKINFORMATION')
+                section_start = content.find('## EXTRAHERAD')
                 section_end = content.find('\n\n', section_start)
                 if section_end == -1:
                     section_end = len(content)
@@ -543,7 +557,7 @@ class SimplifiedLogFileMonitor:
         return events
     
     def _parse_event_file(self, event_file: Path) -> Optional[Dict]:
-        """BEVARAR: Parse event-fil"""
+        """BEVARAR: Parse event-fil med VMA end support"""
         try:
             with open(event_file, 'r') as f:
                 content = f.read()
@@ -557,6 +571,10 @@ class SimplifiedLogFileMonitor:
                 event_type = 'vma_start'
             elif 'vma_test_start' in filename:
                 event_type = 'vma_test_start'
+            elif 'vma_end' in filename:
+                event_type = 'vma_end'
+            elif 'vma_test_end' in filename:
+                event_type = 'vma_test_end'
             else:
                 return None
             
@@ -578,7 +596,7 @@ class SimplifiedLogFileMonitor:
 # ========================================
 class SimplifiedDisplayController:
     """
-    FÖRENKLAD Display Controller med session-backup och enkel transkriptlogik
+    FÖRENKLAD Display Controller med session-backup och enkel transkriptlogik + VMA End Events
     """
     
     def __init__(self):
@@ -594,6 +612,7 @@ class SimplifiedDisplayController:
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE")
         logging.info("🔧 FÖRENKLAD: Enkel transkriptlogik + session backup")
         logging.info("🕐 3B: Timestamp-cutoff implementerat")
+        logging.info("🚨 VMA End Events: Stöds för korrekt display-växling")
     
     def _perform_startup_backup(self):
         """Genomför session-backup vid startup"""
@@ -637,6 +656,7 @@ class SimplifiedDisplayController:
         logging.info("✅ Session-backup genomförd")
         logging.info("🔧 Enkel transkriptlogik: 'senaste txt-fil efter startup'")
         logging.info("🕐 3B: Timestamp-cutoff för transkriptioner")
+        logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
     
     def stop(self):
         """Stoppa display-kontroll"""
@@ -706,7 +726,7 @@ class SimplifiedDisplayController:
         })
     
     def _handle_event(self, event: Dict):
-        """BEVARAR DIN FUNGERANDE VERSION: Hantera event"""
+        """BEVARAR DIN FUNGERANDE VERSION + VMA End Events: Hantera event"""
         event_type = event['type']
         event_time = event['time']
         
@@ -733,6 +753,14 @@ class SimplifiedDisplayController:
                 'rds_data': {}
             }, is_test=is_test)
             
+        elif event_type in ['vma_end', 'vma_test_end']:
+            is_test = event_type == 'vma_test_end'
+            self.display_manager.handle_vma_end({
+                'end_time': event_time,
+                'content': event.get('content', ''),
+                'rds_data': {}
+            }, is_test=is_test)
+            
         else:
             logging.debug(f"Okänd event-typ: {event_type}")
 
@@ -753,17 +781,19 @@ def main():
         ]
     )
     
-    logging.info("🔧 FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik")
-    logging.info("=" * 70)
+    logging.info("🔧 FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik + VMA End Events")
+    logging.info("=" * 80)
     logging.info("✅ FÖRENKLADE ANVÄNDARKRAV:")
     logging.info("  1. Session-backup av alla loggar vid startup")
     logging.info("  2. 3B: Timestamp-cutoff för transkriptioner")
     logging.info("  3. Enkel logik: 'Vilken txt-fil är nyast?'")
     logging.info("  4. Workspace rensas för ny session")
     logging.info("  5. Inga komplicerade matchningar")
+    logging.info("  6. VMA End Events: Korrekt display-växling från VMA till IDLE")
     logging.info("🔧 HYBRID: Session-backup + workspace cleanup")
     logging.info("🕐 3B: Bara transkript efter systemstart")
     logging.info("💡 ENKELT: Senaste txt-fil = senaste transkription")
+    logging.info("🚨 VMA FIX: VMA end events hanteras för korrekt display-växling")
     
     # Kontrollera att logs-katalog finns
     if not LOGS_DIR.exists():
@@ -786,6 +816,7 @@ def main():
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE → repeat")
         logging.info("🔧 Session-backup genomförd")
         logging.info("💡 Enkel transkriptlogik aktiv")
+        logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
         logging.info("Tryck Ctrl+C för att stoppa")
         
         # Keep running
@@ -812,7 +843,7 @@ def main():
         if 'controller' in locals():
             controller.stop()
         
-        logging.info("FÖRENKLAD Display Monitor stoppad - med session backup!")
+        logging.info("FÖRENKLAD Display Monitor stoppad - med session backup och VMA End Events!")
 
 if __name__ == "__main__":
     main()

@@ -2,7 +2,7 @@
 """
 Audio Transcriber Module for VMA Project
 Uses KBWhisper (Swedish Whisper model) for transcription
-Extracts key information from traffic announcements
+Extracts key information from traffic announcements + VMA Support
 
 SAVE AS: ~/rds_logger3/transcriber.py
 """
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class AudioTranscriber:
     """
     Handles audio transcription with KBWhisper
-    Extracts key information from Swedish traffic announcements
+    Extracts key information from Swedish traffic announcements + VMA Support
     """
     
     def __init__(self):
@@ -243,8 +243,8 @@ except Exception as e:
         """
         text = transcription_result['transcription']
         
-        # NEW: Hybrid approach - filter out music/noise
-        filtered_text = self.filter_traffic_content(text)
+        # VMA-AWARE: Hybrid approach - filter based on event type
+        filtered_text = self.filter_traffic_content(text, event_type)
         
         # Extract key information from filtered text (better accuracy)
         key_info = self.extract_key_info(filtered_text)
@@ -255,13 +255,13 @@ except Exception as e:
             'event_type': event_type,
             'event_data': event_data,
             'transcription_original': text,  # Full transcription (music + speech)
-            'transcription_filtered': filtered_text,  # Traffic-only content
+            'transcription_filtered': filtered_text,  # Event-appropriate content
             'extracted_info': key_info,
             'transcription_timestamp': datetime.now().isoformat(),
             'processing_stats': {
                 'original_length': len(text),
                 'filtered_length': len(filtered_text),
-                'music_filtered_out': len(text) - len(filtered_text),
+                'content_filtered_out': len(text) - len(filtered_text),
                 'key_items_found': len([v for v in key_info.values() if v]),
                 'confidence': self._estimate_confidence(filtered_text, key_info)
             }
@@ -362,13 +362,17 @@ except Exception as e:
         
         return info
     
-    def filter_traffic_content(self, text: str) -> str:
+    def filter_traffic_content(self, text: str, event_type: str = None) -> str:
         """
-        Filter transcription to extract only traffic-relevant content
-        Removes music, gibberish, and non-traffic speech
+        Filter transcription to extract relevant content based on event type
+        VMA content should not be filtered - all content is critical
         """
         if not text:
             return ""
+        
+        # VMA content should not be filtered - all content is critical
+        if event_type and 'vma' in event_type.lower():
+            return self._clean_vma_text(text)
         
         # Split into sentences and filter each one
         sentences = []
@@ -393,11 +397,29 @@ except Exception as e:
         logger.debug(f"Text filtering: {len(text)} → {len(filtered_text)} chars")
         return filtered_text
     
+    def _clean_vma_text(self, text: str) -> str:
+        """Clean VMA text without aggressive filtering"""
+        if not text:
+            return ""
+        
+        # Minimal cleaning for VMA - preserve all content
+        text = ' '.join(text.split())  # Remove extra whitespace
+        
+        # Ensure proper sentence ending
+        if text and not text.endswith('.'):
+            text += '.'
+        
+        # Capitalize first letter
+        if text:
+            text = text[0].upper() + text[1:]
+        
+        return text
+    
     def _is_traffic_sentence(self, sentence: str) -> bool:
         """Check if a sentence contains traffic information"""
         sentence_lower = sentence.lower()
         
-        # Swedish traffic keywords
+        # Swedish traffic keywords + VMA keywords (ADDITIVE ONLY)
         traffic_keywords = [
             # Roads
             'väg', 'länsväg', 'riksväg', 'motorväg', 'e4', 'e6', 'e18', 'e20', 'rv',
@@ -416,7 +438,11 @@ except Exception as e:
             # Places (common Swedish locations)
             'stockholm', 'göteborg', 'malmö', 'uppsala', 'västerås', 
             'örebro', 'linköping', 'norrköping', 'sundsvall', 'umeå',
-            'arlanda', 'bromma', 'skavsta', 'landvetter'
+            'arlanda', 'bromma', 'skavsta', 'landvetter',
+            
+            # VMA keywords (ADDITIVE ONLY)
+            'vma', 'viktigt meddelande', 'allmänheten', 'faran över', 'varning',
+            'meddelande', 'sök skydd', 'evakuera', 'kärnkraftverk', 'militär'
         ]
         
         # Must contain at least one traffic keyword
@@ -483,96 +509,6 @@ except Exception as e:
             text = text[0].upper() + text[1:]
         
         return text
-        """
-        Extract key information from Swedish traffic announcement text
-        """
-        text_lower = text.lower()
-        
-        info = {
-            'roads': [],
-            'locations': [],
-            'incident_type': None,
-            'direction': None,
-            'queue_info': None,
-            'alternative_routes': [],
-            'time_info': None,
-            'severity': None,
-            'short_summary': None
-        }
-        
-        # Extract roads (E4, E6, Rv40, etc.)
-        road_patterns = [
-            r'\b(e\d+)\b',  # E4, E6, etc.
-            r'\b(rv\s*\d+)\b',  # Rv40, Rv 40
-            r'\b(länsväg\s*\d+)\b',  # Länsväg 123
-            r'\b(\d+\s*:an)\b'  # 40:an, etc.
-        ]
-        
-        for pattern in road_patterns:
-            matches = re.findall(pattern, text_lower)
-            info['roads'].extend([m.upper().replace(' ', '') for m in matches])
-        
-        # Remove duplicates
-        info['roads'] = list(set(info['roads']))
-        
-        # Extract locations/places
-        # Look for "vid X", "i X", "mellan X och Y"
-        location_patterns = [
-            r'vid\s+([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-ZÅÄÖ][a-zåäö]+)*)',
-            r'i\s+([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-ZÅÄÖ][a-zåäö]+)*)',
-            r'mellan\s+([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-ZÅÄÖ][a-zåäö]+)*)\s+och\s+([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-ZÅÄÖ][a-zåäö]+)*)'
-        ]
-        
-        for pattern in location_patterns:
-            matches = re.findall(pattern, text)
-            if isinstance(matches[0], tuple) if matches else False:
-                # "mellan X och Y" case
-                for match_tuple in matches:
-                    info['locations'].extend(list(match_tuple))
-            else:
-                info['locations'].extend(matches)
-        
-        # Extract direction
-        if 'norrgående' in text_lower or 'norrut' in text_lower:
-            info['direction'] = 'norrgående'
-        elif 'södergående' in text_lower or 'söderut' in text_lower:
-            info['direction'] = 'södergående'
-        elif 'östergående' in text_lower or 'österut' in text_lower:
-            info['direction'] = 'östergående'
-        elif 'västergående' in text_lower or 'västerut' in text_lower:
-            info['direction'] = 'västergående'
-        
-        # Extract incident type
-        incident_types = {
-            'olycka': ['olycka', 'krock', 'kollision'],
-            'fordon_stannat': ['stannat fordon', 'fordon stannat', 'bil stannat'],
-            'vägarbete': ['vägarbete', 'väjarbete', 'arbete'],
-            'kö': ['kö', 'köer', 'trafikstörning'],
-            'avstängning': ['avstängd', 'stängd', 'blockerad']
-        }
-        
-        for incident_key, keywords in incident_types.items():
-            if any(keyword in text_lower for keyword in keywords):
-                info['incident_type'] = incident_key
-                break
-        
-        # Extract queue information
-        queue_patterns = [
-            r'(\d+)\s*(?:km|kilometer)',
-            r'kö\s*(?:på\s*)?(\d+)\s*(?:km|kilometer)',
-            r'(\d+)\s*minuter?\s*extra'
-        ]
-        
-        for pattern in queue_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                info['queue_info'] = match.group(1) + ("km" if "km" in pattern else "min")
-                break
-        
-        # Generate short summary for display (using filtered text)
-        info['short_summary'] = self._generate_short_summary(info, text)
-        
-        return info
     
     def _generate_short_summary(self, info: Dict[str, Any], filtered_text: str) -> str:
         """Generate short summary suitable for e-paper display using filtered text"""
@@ -671,14 +607,15 @@ except Exception as e:
             return None
     
     def _format_transcription_file(self, processed_result: Dict[str, Any]) -> str:
-        """Format transcription result as structured text file with filtering"""
+        """Format transcription result as structured text file with VMA awareness"""
         raw = processed_result['transcription_raw']
         info = processed_result['extracted_info']
         stats = processed_result['processing_stats']
+        event_type = processed_result['event_type']
         
-        # Header
+        # Header with event type awareness
         content = [
-            "# VMA Project - Transkription med Hybrid-filtrering",
+            f"# VMA Project - Transkription ({event_type.upper()})",
             "=" * 65,
             f"Tidpunkt: {processed_result['transcription_timestamp']}",
             f"Event-typ: {processed_result['event_type']}",
@@ -695,15 +632,15 @@ except Exception as e:
             "-" * 30,
             f"Original text: {stats['original_length']} tecken",
             f"Filtrerad text: {stats['filtered_length']} tecken",
-            f"Musik/brus bortfiltrerat: {stats['music_filtered_out']} tecken",
+            f"Innehåll filtrerat: {stats['content_filtered_out']} tecken",
             f"Konfidensgrad: {stats['confidence']:.1%}",
             ""
         ])
         
         # Extracted key information (from filtered text)
         content.extend([
-            "## EXTRAHERAD TRAFIKINFORMATION",
-            "-" * 35
+            "## EXTRAHERAD INFORMATION",
+            "-" * 25
         ])
         
         if info['roads']:
@@ -726,24 +663,25 @@ except Exception as e:
                 info['short_summary']
             ])
         
-        # Filtered transcription (clean traffic content)
+        # Filtered transcription (event-appropriate content)
         filtered_text = processed_result['transcription_filtered']
+        filter_label = "VMA MEDDELANDE" if 'vma' in event_type.lower() else "FILTRERAD TRANSKRIPTION"
         content.extend([
             "",
-            "## FILTRERAD TRANSKRIPTION (endast trafik)",
-            "-" * 45,
-            filtered_text if filtered_text else "[Ingen trafikspecifik information extraherad]",
+            f"## {filter_label}",
+            "-" * (len(filter_label) + 3),
+            filtered_text if filtered_text else "[Inget relevant innehåll extraherat]",
             ""
         ])
         
         # Original full transcription (for reference/debug)
         content.extend([
-            "## ORIGINAL TRANSKRIPTION (komplett med musik/brus)",
-            "-" * 55,
+            "## ORIGINAL TRANSKRIPTION (komplett)",
+            "-" * 40,
             processed_result['transcription_original'],
             "",
             "=" * 65,
-            f"Genererad av KBWhisper Medium + Hybrid-filtrering {datetime.now():%Y-%m-%d %H:%M:%S}"
+            f"Genererad av KBWhisper Medium + VMA-medveten filtrering {datetime.now():%Y-%m-%d %H:%M:%S}"
         ])
         
         return '\n'.join(content)
@@ -758,7 +696,8 @@ except Exception as e:
             'average_time_per_transcription': avg_time,
             'is_initialized': self.is_initialized,
             'model_name': self.model_name,
-            'output_directory': str(TRANSCRIPTION_DIR)
+            'output_directory': str(TRANSCRIPTION_DIR),
+            'vma_support': True
         }
 
 # ========================================

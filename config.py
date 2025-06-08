@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VMA Project - Configuration with Adjusted Filter (15s minimum)
+VMA Project - Configuration with VMA Duration Filter (UPDATED)
 OVERWRITES: ~/rds_logger3/config.py
 """
 
@@ -56,10 +56,15 @@ AUDIO_CHANNELS = 1
 PRE_TRIGGER_BUFFER_SECONDS = 1  # 1 second of pre-recording
 
 # ========================================
-# EVENT DETECTION - UPDATED FILTER
+# EVENT DETECTION - VMA SUPPORT ADDED
 # ========================================
 EVENT_TIMEOUT_SECONDS = 0.5  # Short timeout for quick TA transitions
-MIN_EVENT_DURATION_SECONDS = 15  # UPDATED: More realistic filter (was 30s)
+
+# VMA-specific duration filters (from SR documentation)
+MIN_VMA_DURATION_SECONDS = 10      # VMA can be shorter than traffic
+MIN_TRAFFIC_DURATION_SECONDS = 15  # Keep existing traffic filter
+MIN_EVENT_DURATION_SECONDS = 15    # Legacy compatibility
+
 MAX_EVENT_DURATION_SECONDS = 600  # 10 minutes emergency stop
 
 # ========================================
@@ -109,5 +114,5 @@ def validate_config() -> list:
 # ========================================
 # MODULE INFO
 # ========================================
-__version__ = "3.2.0"
-__description__ = "VMA Project - With 15s Duration Filter (Realistic for Swedish Traffic)"
+__version__ = "3.2.1"
+__description__ = "VMA Project - With VMA Duration Filter Support (10s VMA, 15s Traffic)"
