@@ -275,8 +275,8 @@ class ContentFormatter:
         start_time = traffic_data.get('start_time', datetime.now())
         status_info = status_info or {}
         
-        # ENERGIOPTIMERAD: Huvudrubrik med sekund-precision (events viktiga)
-        header = f"TRAFIKMEDDELANDE PÅGÅR - {start_time.strftime('%H:%M:%S')}"
+        # FÖRBÄTTRAD: Mer neutral rubrik utan "PÅGÅR"
+        header = f"TRAFIKMEDDELANDE {start_time.strftime('%H:%M:%S')}"
         
         # Extraherad nyckelinformation från transkription
         location = self._extract_location(transcription)
