@@ -1,0 +1,48 @@
+[Unit]
+Description=VMA Crisis Preparedness System with E-paper Display
+Documentation=https://github.com/your-repo/vma-project
+After=network.target sound.target usb.target
+Wants=network.target
+# Vänta på USB-enheter för RTL-SDR
+After=dev-bus-usb.device
+
+[Service]
+Type=simple
+User=chris
+Group=chris
+WorkingDirectory=/home/chris/rds_logger3
+
+# Huvudkommando - använder befintliga start-skript
+ExecStart=/home/chris/rds_logger3/start_vma_with_display.sh
+
+# Automatisk restart vid krasch (kritiskt för krisberedskap)
+Restart=always
+RestartSec=30
+
+# Timeout-inställningar
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+# Environment variabler
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/home/chris
+Environment=USER=chris
+
+# Standard I/O hantering
+StandardOutput=journal
+StandardError=journal
+
+# Process hantering
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Säkerhet och isolering
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits för stabilitet
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
