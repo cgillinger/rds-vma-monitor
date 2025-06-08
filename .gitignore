@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Loggar och genererade data
+logs/
+*.log
+
+# Tillfälliga eller säkerhetskopior
+backup/
+
+# Displaybibliotek (oförändrat tredjepartsinnehåll)
+e-Paper/
+
+# Systemfiler
+.DS_Store
+*.swp
+*.bak
