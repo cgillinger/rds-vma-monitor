@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik + VMA End Events
+FIXAD Display Monitor - Med KOMPLETT RDS event cleanup
 Fil: display_monitor.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/display_monitor.py
 
-IMPLEMENTERAR:
-- 3B: Timestamp-cutoff (visa bara transkript skapade efter systemstart)
-- Hybrid: Session-backup av alla loggar vid startup
-- Förenklad logik: "Vilken txt-fil är nyast?" istället för komplex matchning
-- VMA End Events: Hantera VMA end för korrekt display-växling
+FIX: Rensa ALLA RDS event-loggar vid workspace cleanup
+BUG: Gamla rds_event_*.log filer rensades inte, så samma events lästes in igen
 """
 
 import os
@@ -57,11 +54,11 @@ STATUS_UPDATE_INTERVAL = 900  # seconds (15 minuter)
 STARTUP_CUTOFF_MINUTES = 15  # Bara events från senaste 15 min vid start
 
 # ========================================
-# SESSION BACKUP SYSTEM
+# SESSION BACKUP SYSTEM - FIXAD VERSION
 # ========================================
 class SessionBackupManager:
     """
-    Hanterar backup av alla loggar vid systemstart
+    FIXAD: Hanterar backup av alla loggar vid systemstart - inkluderar RDS event cleanup
     """
     
     def __init__(self, project_dir: Path, logs_dir: Path):
@@ -86,7 +83,7 @@ class SessionBackupManager:
             backed_up_files = 0
             total_size = 0
             
-            # 1. RDS event-loggar
+            # 1. RDS event-loggar - FIXAD PRIORITET
             backed_up, size = self._backup_category(
                 self.logs_dir.glob(RDS_EVENT_LOG_PATTERN),
                 session_backup_dir / "rds_events"
@@ -219,7 +216,7 @@ class SessionBackupManager:
     
     def cleanup_workspace_after_backup(self):
         """
-        Rensa workspace efter backup (så att vi startar rent)
+        FIXAD: Rensa workspace efter backup - INKLUDERAR RDS EVENT-LOGGAR
         """
         try:
             cleaned_files = 0
@@ -229,6 +226,7 @@ class SessionBackupManager:
                 for txt_file in TRANSCRIPTIONS_DIR.glob("*.txt"):
                     txt_file.unlink()
                     cleaned_files += 1
+                    logging.debug(f"🗑️ Rensade transkription: {txt_file.name}")
             
             # Rensa audio-filer
             audio_dir = self.logs_dir / "audio"
@@ -236,6 +234,13 @@ class SessionBackupManager:
                 for wav_file in audio_dir.glob("*.wav"):
                     wav_file.unlink()
                     cleaned_files += 1
+                    logging.debug(f"🗑️ Rensade audio: {wav_file.name}")
+            
+            # 🔥 FIX: Rensa RDS event-loggar (detta saknades!)
+            for event_log in self.logs_dir.glob(RDS_EVENT_LOG_PATTERN):
+                event_log.unlink()
+                cleaned_files += 1
+                logging.debug(f"🗑️ Rensade RDS event: {event_log.name}")
             
             # Rensa screen-filer
             screen_dir = self.logs_dir / "screen"
@@ -243,15 +248,18 @@ class SessionBackupManager:
                 for png_file in screen_dir.glob("*.png"):
                     png_file.unlink()
                     cleaned_files += 1
+                    logging.debug(f"🗑️ Rensade skärmdump: {png_file.name}")
             
             # Rensa display state
             for pattern in ["display_sim_*.png", "display_state.json"]:
                 for file_path in self.logs_dir.glob(pattern):
                     file_path.unlink()
                     cleaned_files += 1
+                    logging.debug(f"🗑️ Rensade display state: {file_path.name}")
             
             if cleaned_files > 0:
                 logging.info(f"🧹 Workspace rensat: {cleaned_files} filer raderade för ny session")
+                logging.info("🔥 FIX: RDS event-loggar rensades också (tidigare bug)")
             
         except Exception as e:
             logging.error(f"❌ Fel vid rensning av workspace: {e}")
@@ -290,6 +298,7 @@ class SimplifiedLogFileMonitor:
         logging.info(f"Event cutoff: {self.cutoff_time} (15 min grace period)")
         logging.info(f"🔧 FÖRENKLAD: Enkel transkriptionslogik - 'senaste txt-fil'")
         logging.info(f"🕐 3B: Timestamp-cutoff för transkriptioner")
+        logging.info(f"🔥 FIX: RDS event cleanup inkluderad i workspace rensning")
     
     def get_latest_rds_log(self) -> Optional[Path]:
         """BEVARAR: Hitta senaste RDS continuous log"""
@@ -312,6 +321,7 @@ class SimplifiedLogFileMonitor:
                 
                 # BEVARAR DIN FUNGERANDE FILTER 1: Bara filer efter cutoff
                 if file_mtime < self.cutoff_time:
+                    logging.debug(f"🔥 CUTOFF: Skippar gammal event-logg: {log_file.name} (äldre än {self.cutoff_time})")
                     continue
                 
                 # BEVARAR DIN FUNGERANDE FILTER 2: Skippa redan processade
@@ -613,9 +623,10 @@ class SimplifiedDisplayController:
         logging.info("🔧 FÖRENKLAD: Enkel transkriptlogik + session backup")
         logging.info("🕐 3B: Timestamp-cutoff implementerat")
         logging.info("🚨 VMA End Events: Stöds för korrekt display-växling")
+        logging.info("🔥 FIX: RDS event cleanup fixad - gamla events läses inte in")
     
     def _perform_startup_backup(self):
-        """Genomför session-backup vid startup"""
+        """FIXAD: Genomför session-backup vid startup"""
         try:
             backup_manager = SessionBackupManager(PROJECT_DIR, LOGS_DIR)
             
@@ -625,9 +636,10 @@ class SimplifiedDisplayController:
             if backup_dir:
                 logging.info(f"✅ Session-backup skapad: {backup_dir.name}")
                 
-                # Rensa workspace för ny session
+                # FIXAD: Rensa workspace för ny session (inkluderar RDS events)
                 backup_manager.cleanup_workspace_after_backup()
                 logging.info("🧹 Workspace rensat - redo för ny session")
+                logging.info("🔥 FIX: RDS event-loggar rensades korrekt")
             else:
                 logging.info("ℹ️ Ingen backup behövdes - startar med rent workspace")
                 
@@ -657,6 +669,7 @@ class SimplifiedDisplayController:
         logging.info("🔧 Enkel transkriptlogik: 'senaste txt-fil efter startup'")
         logging.info("🕐 3B: Timestamp-cutoff för transkriptioner")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
+        logging.info("🔥 FIX: Gamla RDS events rensas nu korrekt")
     
     def stop(self):
         """Stoppa display-kontroll"""
@@ -781,8 +794,9 @@ def main():
         ]
     )
     
-    logging.info("🔧 FÖRENKLAD Display Monitor - 3B + Hybrid + Enkel transkriptlogik + VMA End Events")
+    logging.info("🔥 FIXAD Display Monitor - Session backup med komplett RDS event cleanup")
     logging.info("=" * 80)
+    logging.info("🔥 FIX: RDS event-loggar rensas nu korrekt vid workspace cleanup")
     logging.info("✅ FÖRENKLADE ANVÄNDARKRAV:")
     logging.info("  1. Session-backup av alla loggar vid startup")
     logging.info("  2. 3B: Timestamp-cutoff för transkriptioner")
@@ -794,6 +808,7 @@ def main():
     logging.info("🕐 3B: Bara transkript efter systemstart")
     logging.info("💡 ENKELT: Senaste txt-fil = senaste transkription")
     logging.info("🚨 VMA FIX: VMA end events hanteras för korrekt display-växling")
+    logging.info("🔥 CRITICAL FIX: RDS event-loggar rensas korrekt från workspace")
     
     # Kontrollera att logs-katalog finns
     if not LOGS_DIR.exists():
@@ -811,12 +826,13 @@ def main():
         controller = SimplifiedDisplayController()
         controller.start()
         
-        logging.info("✅ FÖRENKLAD Display Monitor aktiv")
+        logging.info("✅ FIXAD Display Monitor aktiv")
         logging.info("🏠 Startup-skärm visas nu")
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE → repeat")
         logging.info("🔧 Session-backup genomförd")
         logging.info("💡 Enkel transkriptlogik aktiv")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
+        logging.info("🔥 CRITICAL FIX: Gamla RDS events läses inte längre in")
         logging.info("Tryck Ctrl+C för att stoppa")
         
         # Keep running
@@ -834,7 +850,7 @@ def main():
                 logging.info(f"📊 Status: {current_state} mode, {screenshots} skärmdumpar, {processed_events} events, {processed_trans} transkriptioner")
             
     except KeyboardInterrupt:
-        logging.info("Keyboard interrupt - stoppar FÖRENKLAD display monitor")
+        logging.info("Keyboard interrupt - stoppar FIXAD display monitor")
     except Exception as e:
         logging.error(f"Fatal fel: {e}")
         import traceback
@@ -843,7 +859,7 @@ def main():
         if 'controller' in locals():
             controller.stop()
         
-        logging.info("FÖRENKLAD Display Monitor stoppad - med session backup och VMA End Events!")
+        logging.info("FIXAD Display Monitor stoppad - RDS event cleanup fungerar nu!")
 
 if __name__ == "__main__":
     main()
