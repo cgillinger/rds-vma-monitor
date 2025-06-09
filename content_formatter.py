@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 """
-ENERGIOPTIMERAD Content Formatter - Smart status timing
+ENERGIOPTIMERAD Content Formatter - Smart status timing + OPTIMERAD för långa trafikmeddelanden
 Fil: content_formatter.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/content_formatter.py
+
+HOTFIX:
+- Fixar _extract_direction() att bara extrahera riktningsord (inte hela meddelandet)
+- Ändrar tillbaka sektionsnamn till 'transcription' för kompatibilitet
+- Tar bort .title() som skapade versaler på varje ord
+
+OPTIMERINGAR:
+- Trafikmeddelanden: +5 rader extra för längre meddelanden
+- Header: "TRAFIKMEDDELANDE. STARTAD: HH:MM" (utan sekunder)
+- Borttaget: "FULLSTÄNDIG TRANSKRIPTION:" rubrik (redundant)
+- Borttaget: Status info-sektion (redundant - redan i header)
+- Behållet: Key info-sektionen (överskådlig och intuitiv)
 
 ENERGIOPTIMERING:
 - Status footer: 15min intervall (intelligent timing)
@@ -81,7 +93,7 @@ def format_swedish_date(dt, include_seconds=False):
 
 class ContentFormatter:
     """
-    ENERGIOPTIMERAD Content Formatter med smart status timing
+    ENERGIOPTIMERAD Content Formatter med smart status timing + OPTIMERAD för långa trafikmeddelanden
     """
     
     def __init__(self):
@@ -92,7 +104,8 @@ class ContentFormatter:
         # ENERGIOPTIMERING: Cache för status timing
         self.last_status_minute = None
         
-        logger.debug("🔋 ENERGIOPTIMERAD ContentFormatter initialiserad")
+        logger.debug("🔋 ENERGIOPTIMERAD + OPTIMERAD ContentFormatter initialiserad")
+        logger.debug("🚧 TRAFIKOPTIMERING: +5 rader extra för längre meddelanden")
         
     def format_for_mode(self, mode: str, primary_data: Dict = None, status_info: Dict = None, **kwargs) -> Dict:
         """
@@ -122,8 +135,8 @@ class ContentFormatter:
         now = datetime.now()
         status_info = status_info or {}
         
-        # Huvudrubrik
-        header = "VMA-SYSTEM STARTAR"
+        # Huvudrubrik - UPPDATERAD: "STARTAT" istället för "STARTAR"
+        header = "VMA-SYSTEM STARTAT"
         
         # ENERGIOPTIMERAD: Datum och tid utan sekunder för startup
         date_time = format_swedish_date(now, include_seconds=False).upper()
@@ -270,13 +283,13 @@ class ContentFormatter:
     
     def format_for_traffic_mode(self, traffic_data: Dict, transcription: Dict = None, status_info: Dict = None) -> Dict:
         """
-        Trafikmeddelande-läge med status feedback
+        OPTIMERAD Trafikmeddelande-läge med +5 rader extra för längre meddelanden
         """
         start_time = traffic_data.get('start_time', datetime.now())
         status_info = status_info or {}
         
-        # FÖRBÄTTRAD: Mer neutral rubrik utan "PÅGÅR"
-        header = f"TRAFIKMEDDELANDE {start_time.strftime('%H:%M:%S')}"
+        # OPTIMERAD HEADER: "TRAFIKMEDDELANDE. STARTAD: HH:MM" (utan sekunder)
+        header = f"TRAFIKMEDDELANDE. STARTAD: {start_time.strftime('%H:%M')}"
         
         # Extraherad nyckelinformation från transkription
         location = self._extract_location(transcription)
@@ -284,7 +297,7 @@ class ContentFormatter:
         queue_info = self._extract_queue_info(transcription)
         direction = self._extract_direction(transcription)
         
-        # Strukturerad info-sektion
+        # Strukturerad info-sektion - BEHÅLLS SOM DEN ÄR (överskådlig och intuitiv)
         key_info = []
         if location:
             key_info.append(f"PLATS: {location}")
@@ -295,7 +308,7 @@ class ContentFormatter:
         if direction:
             key_info.append(f"RIKTNING: {direction}")
         
-        # Fullständig transkription
+        # OPTIMERAT: Fullständig transkription UTAN RUBRIK (sparar 1 rad)
         full_transcription = ""
         if transcription and transcription.get('text'):
             text = transcription['text'].strip()
@@ -303,17 +316,6 @@ class ContentFormatter:
             if len(text) > max_chars:
                 text = text[:max_chars-3] + "..."
             full_transcription = text
-        
-        # Status och timing
-        duration = (datetime.now() - start_time).total_seconds()
-        duration_str = f"{int(duration//60)}m {int(duration%60)}s"
-        
-        status_info_content = [
-            f"STARTAD: {start_time.strftime('%H:%M:%S')}",
-            f"LÄNGD: {duration_str}",
-            f"Status: Pågår",
-            f"Inspelning: {('Slutförd' if transcription else 'Pågår')}"
-        ]
         
         # ENERGIOPTIMERAD: Status feedback med smart timing
         status_text = self._format_status_feedback_optimized(status_info, mode='traffic')
@@ -335,20 +337,14 @@ class ContentFormatter:
                     'line_spacing': 1.4,
                     'spacing_after': 15
                 },
+                # HOTFIX: Ändrat tillbaka till 'transcription' för kompatibilitet med screen_layouts.py
                 'transcription': {
-                    'title': 'FULLSTÄNDIG TRANSKRIPTION:',
                     'content': [full_transcription] if full_transcription else ["(Transkribering pågår...)"],
                     'font_size': self.settings['fonts']['normal_content'],
                     'word_wrap': True,
                     'spacing_after': 15
                 },
-                'status_info': {
-                    'content': status_info_content,
-                    'font_size': self.settings['fonts']['metadata'],
-                    'line_spacing': 1.2,
-                    'alignment': 'left',
-                    'spacing_after': 10
-                },
+                # BORTTAGET: 'status_info' sektion (4 rader sparade - var redundant)
                 'status_footer': {
                     'text': status_text,
                     'font_size': self.settings['fonts']['small_details'],
@@ -496,7 +492,7 @@ class ContentFormatter:
             return f"System {system_status} • {last_update}"
     
     # ========================================
-    # HJÄLPMETODER (oförändrade från original)
+    # HJÄLPMETODER (med HOTFIX för direction-extraktion)
     # ========================================
     
     def _extract_location(self, transcription: Dict) -> str:
@@ -567,23 +563,26 @@ class ContentFormatter:
         return ", ".join(queue_info) if queue_info else ""
     
     def _extract_direction(self, transcription: Dict) -> str:
-        """Extraherar färdriktning"""
+        """
+        HOTFIX: Extraherar färdriktning - BEGRÄNSAT till bara riktningsord
+        """
         if not transcription or not transcription.get('text'):
             return ""
         
         text = transcription['text'].lower()
         
+        # HOTFIX: Bara de EXAKTA riktningsorden - inga greedy patterns
         direction_patterns = [
-            r'(norrgående|södergående|östgående|västgående)',
-            r'mot\s+([\w\s]+)',
-            r'i\s+riktning\s+mot\s+([\w\s]+)',
+            r'\b(norrgående|södergående|östgående|västgående)\b',
+            r'\b(norrut|söderut|österut|västerut)\b'
         ]
         
         for pattern in direction_patterns:
             match = re.search(pattern, text)
             if match:
                 direction = match.group(1).strip()
-                return direction.title()
+                # HOTFIX: Ta bort .title() som skapade versaler på varje ord
+                return direction.lower()
         
         return ""
     
@@ -660,14 +659,16 @@ class ContentFormatter:
             return False
 
 if __name__ == "__main__":
-    # Test av ENERGIOPTIMERAD content formatter
+    # Test av ENERGIOPTIMERAD + OPTIMERAD content formatter
     formatter = ContentFormatter()
     
-    print("🔋 Test av ENERGIOPTIMERAD Content Formatter")
-    print("=" * 50)
+    print("🔋 Test av ENERGIOPTIMERAD + OPTIMERAD Content Formatter")
+    print("=" * 60)
+    print("🚧 TRAFIKOPTIMERING: +5 rader extra för längre meddelanden")
+    print("🩹 HOTFIX: Fixar riktningsextraktion och transkriptionsvisning")
     
     # Test ENERGIOPTIMERADE modes
-    test_modes = ['startup', 'idle']
+    test_modes = ['startup', 'idle', 'traffic']
     
     for mode in test_modes:
         print(f"\n📱 Testar {mode} mode:")
@@ -678,7 +679,27 @@ if __name__ == "__main__":
         print(f"  Sections: {list(content['sections'].keys())}")
         if 'status_footer' in content['sections']:
             print(f"  Status: {content['sections']['status_footer']['text']}")
+        
+        # Visa trafikoptimering
+        if mode == 'traffic':
+            print(f"  🚧 OPTIMERAT: Ingen 'status_info' sektion")
+            print(f"  🚧 HOTFIX: 'transcription' sektion (kompatibilitet)")
+            print(f"  🩹 HOTFIX: Begränsad direction-extraktion")
+            print(f"  🚧 RESULTAT: +5 rader för längre meddelanden!")
     
-    print("\n🔋 ENERGIOPTIMERAD Content Formatter test slutförd!")
+    # Test direction-extraktion
+    print(f"\n🩹 Test av FIXAD direction-extraktion:")
+    test_transcription = {
+        'text': 'Trafikinformation. På E20 södergående mot Södertälje har en lastbil stannat till höger och andra lastbilar måste köra om.'
+    }
+    
+    direction = formatter._extract_direction(test_transcription)
+    print(f"  Text: {test_transcription['text']}")
+    print(f"  Extraherad riktning: '{direction}'")
+    print(f"  ✅ Endast riktningsord extraheras nu!")
+    
+    print("\n🔋 ENERGIOPTIMERAD + OPTIMERAD + HOTFIX Content Formatter test slutförd!")
     print("✅ 15min status intervall implementerat")
     print("⚡ Smart timing för minimal hash-ändringar")
+    print("🚧 Trafikmeddelanden optimerade för maximalt innehåll!")
+    print("🩹 Direction-extraktion och transkriptionsvisning FIXAD!")

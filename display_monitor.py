@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-FIXAD Display Monitor - Med KOMPLETT RDS event cleanup
+UPPDATERAD Display Monitor - DAGLIG Backup-strategi istället för session-baserad
 Fil: display_monitor.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/display_monitor.py
 
-FIX: Rensa ALLA RDS event-loggar vid workspace cleanup
-BUG: Gamla rds_event_*.log filer rensades inte, så samma events lästes in igen
+STORA FÖRÄNDRINGAR:
+- SessionBackupManager → DailyBackupManager
+- backup/session_YYYYMMDD_HHMMSS/ → backup/daily_YYYYMMDD/session_N_HHMMSS/
+- Automatisk session-numrering inom dagen
+- Daglig metadata istället för session-metadata
+- Konflikthantering vid flera omstarter samma dag
 """
 
 import os
@@ -28,7 +32,7 @@ except ImportError:
     sys.exit(1)
 
 # ========================================
-# CONFIGURATION - ENERGIOPTIMERAT + BACKUP
+# CONFIGURATION - DAGLIG BACKUP
 # ========================================
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -54,11 +58,15 @@ STATUS_UPDATE_INTERVAL = 900  # seconds (15 minuter)
 STARTUP_CUTOFF_MINUTES = 15  # Bara events från senaste 15 min vid start
 
 # ========================================
-# SESSION BACKUP SYSTEM - FIXAD VERSION
+# DAGLIG BACKUP SYSTEM - NY ARKITEKTUR
 # ========================================
-class SessionBackupManager:
+class DailyBackupManager:
     """
-    FIXAD: Hanterar backup av alla loggar vid systemstart - inkluderar RDS event cleanup
+    DAGLIG Backup Manager - organiserar backups per dag istället för per session
+    
+    STRUKTUR:
+    backup/daily_YYYYMMDD/session_N_HHMMSS/data...
+    backup/daily_YYYYMMDD/daily_info.json
     """
     
     def __init__(self, project_dir: Path, logs_dir: Path):
@@ -66,24 +74,37 @@ class SessionBackupManager:
         self.logs_dir = logs_dir
         self.backup_base_dir = project_dir / "backup"
         
-    def create_session_backup(self) -> Optional[Path]:
+        # Dagens datum för backup
+        self.today = datetime.now().strftime("%Y%m%d")
+        self.daily_backup_dir = self.backup_base_dir / f"daily_{self.today}"
+        
+        logging.info("📅 DailyBackupManager initialiserad")
+        logging.info(f"📁 Dagens backup-katalog: {self.daily_backup_dir.name}")
+    
+    def create_daily_backup(self) -> Optional[Path]:
         """
-        Skapa backup av alla relevanta filer från föregående session
-        Returnerar backup-katalog eller None om backup misslyckades
+        Skapa dagens backup - lägg till ny session i dagens katalog
+        Returnerar session-katalog eller None om backup misslyckades
         """
         try:
-            # Generera session backup-katalog
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            session_backup_dir = self.backup_base_dir / f"session_{timestamp}"
+            # Skapa dagens backup-katalog om den inte finns
+            self.daily_backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Hitta nästa session-nummer för idag
+            session_number = self._get_next_session_number()
+            current_time = datetime.now().strftime("%H%M%S")
+            session_name = f"session_{session_number}_{current_time}"
+            session_backup_dir = self.daily_backup_dir / session_name
+            
             session_backup_dir.mkdir(parents=True, exist_ok=True)
             
-            logging.info(f"🔄 Skapar session-backup: {session_backup_dir.name}")
+            logging.info(f"🔄 Skapar daglig backup: {self.daily_backup_dir.name}/{session_name}")
             
             # Backup olika kategorier
             backed_up_files = 0
             total_size = 0
             
-            # 1. RDS event-loggar - FIXAD PRIORITET
+            # 1. RDS event-loggar
             backed_up, size = self._backup_category(
                 self.logs_dir.glob(RDS_EVENT_LOG_PATTERN),
                 session_backup_dir / "rds_events"
@@ -144,21 +165,43 @@ class SessionBackupManager:
                 backed_up_files += backed_up
                 total_size += size
             
-            # Skapa session-info
-            self._create_session_info(session_backup_dir, backed_up_files, total_size)
+            # Skapa session-info för denna session
+            self._create_session_info(session_backup_dir, session_number, backed_up_files, total_size)
+            
+            # Uppdatera dagens samlad metadata
+            self._update_daily_info(session_number, backed_up_files, total_size)
             
             if backed_up_files > 0:
-                logging.info(f"✅ Session-backup komplett: {backed_up_files} filer ({total_size/1024/1024:.1f} MB)")
+                logging.info(f"✅ Daglig backup session {session_number} komplett: {backed_up_files} filer ({total_size/1024/1024:.1f} MB)")
                 return session_backup_dir
             else:
-                logging.info("ℹ️ Ingen session-backup behövdes (inga filer att spara)")
-                # Ta bort tom backup-katalog
+                logging.info(f"ℹ️ Daglig backup session {session_number}: Inga filer att spara")
+                # Ta bort tom session-katalog
                 session_backup_dir.rmdir()
                 return None
                 
         except Exception as e:
-            logging.error(f"❌ Fel vid session-backup: {e}")
+            logging.error(f"❌ Fel vid daglig backup: {e}")
             return None
+    
+    def _get_next_session_number(self) -> int:
+        """Hitta nästa session-nummer för idag"""
+        if not self.daily_backup_dir.exists():
+            return 1
+        
+        session_numbers = []
+        for item in self.daily_backup_dir.iterdir():
+            if item.is_dir() and item.name.startswith('session_'):
+                try:
+                    # Extrahera session-nummer från namn som "session_1_080000"
+                    parts = item.name.split('_')
+                    if len(parts) >= 2:
+                        session_num = int(parts[1])
+                        session_numbers.append(session_num)
+                except (ValueError, IndexError):
+                    continue
+        
+        return max(session_numbers, default=0) + 1
     
     def _backup_category(self, file_list, backup_subdir: Path) -> tuple[int, int]:
         """
@@ -197,13 +240,14 @@ class SessionBackupManager:
         
         return files_backed_up, total_size
     
-    def _create_session_info(self, session_dir: Path, file_count: int, total_size: int):
-        """Skapa session-info fil"""
-        info = {
+    def _create_session_info(self, session_dir: Path, session_number: int, file_count: int, total_size: int):
+        """Skapa session-info fil för denna session"""
+        session_info = {
+            'session_number': session_number,
             'session_timestamp': datetime.now().isoformat(),
             'files_backed_up': file_count,
             'total_size_bytes': total_size,
-            'backup_reason': 'System startup session backup',
+            'backup_reason': f'Daglig backup session {session_number}',
             'system_info': {
                 'project_dir': str(self.project_dir),
                 'logs_dir': str(self.logs_dir)
@@ -212,11 +256,54 @@ class SessionBackupManager:
         
         info_file = session_dir / "session_info.json"
         with open(info_file, 'w') as f:
-            json.dump(info, f, indent=2)
+            json.dump(session_info, f, indent=2)
+    
+    def _update_daily_info(self, session_number: int, file_count: int, total_size: int):
+        """Uppdatera dagens samlad metadata"""
+        daily_info_file = self.daily_backup_dir / "daily_info.json"
+        
+        # Läs befintlig info om den finns
+        if daily_info_file.exists():
+            try:
+                with open(daily_info_file, 'r') as f:
+                    daily_info = json.load(f)
+            except Exception as e:
+                logging.warning(f"Kunde inte läsa daily_info.json: {e}")
+                daily_info = self._create_initial_daily_info()
+        else:
+            daily_info = self._create_initial_daily_info()
+        
+        # Lägg till denna session
+        session_data = {
+            'session_number': session_number,
+            'timestamp': datetime.now().isoformat(),
+            'files_backed_up': file_count,
+            'size_bytes': total_size
+        }
+        
+        daily_info['sessions'].append(session_data)
+        daily_info['sessions_count'] = len(daily_info['sessions'])
+        daily_info['total_size_bytes'] = sum(s['size_bytes'] for s in daily_info['sessions'])
+        daily_info['last_updated'] = datetime.now().isoformat()
+        
+        # Spara uppdaterad info
+        with open(daily_info_file, 'w') as f:
+            json.dump(daily_info, f, indent=2)
+    
+    def _create_initial_daily_info(self) -> Dict:
+        """Skapa initial daglig info-struktur"""
+        return {
+            'date': self.today,
+            'created': datetime.now().isoformat(),
+            'last_updated': datetime.now().isoformat(),
+            'sessions_count': 0,
+            'total_size_bytes': 0,
+            'sessions': []
+        }
     
     def cleanup_workspace_after_backup(self):
         """
-        FIXAD: Rensa workspace efter backup - INKLUDERAR RDS EVENT-LOGGAR
+        Rensa workspace efter backup (så att vi startar rent)
         """
         try:
             cleaned_files = 0
@@ -226,7 +313,6 @@ class SessionBackupManager:
                 for txt_file in TRANSCRIPTIONS_DIR.glob("*.txt"):
                     txt_file.unlink()
                     cleaned_files += 1
-                    logging.debug(f"🗑️ Rensade transkription: {txt_file.name}")
             
             # Rensa audio-filer
             audio_dir = self.logs_dir / "audio"
@@ -234,13 +320,6 @@ class SessionBackupManager:
                 for wav_file in audio_dir.glob("*.wav"):
                     wav_file.unlink()
                     cleaned_files += 1
-                    logging.debug(f"🗑️ Rensade audio: {wav_file.name}")
-            
-            # 🔥 FIX: Rensa RDS event-loggar (detta saknades!)
-            for event_log in self.logs_dir.glob(RDS_EVENT_LOG_PATTERN):
-                event_log.unlink()
-                cleaned_files += 1
-                logging.debug(f"🗑️ Rensade RDS event: {event_log.name}")
             
             # Rensa screen-filer
             screen_dir = self.logs_dir / "screen"
@@ -248,24 +327,52 @@ class SessionBackupManager:
                 for png_file in screen_dir.glob("*.png"):
                     png_file.unlink()
                     cleaned_files += 1
-                    logging.debug(f"🗑️ Rensade skärmdump: {png_file.name}")
             
             # Rensa display state
             for pattern in ["display_sim_*.png", "display_state.json"]:
                 for file_path in self.logs_dir.glob(pattern):
                     file_path.unlink()
                     cleaned_files += 1
-                    logging.debug(f"🗑️ Rensade display state: {file_path.name}")
             
             if cleaned_files > 0:
                 logging.info(f"🧹 Workspace rensat: {cleaned_files} filer raderade för ny session")
-                logging.info("🔥 FIX: RDS event-loggar rensades också (tidigare bug)")
             
         except Exception as e:
             logging.error(f"❌ Fel vid rensning av workspace: {e}")
+    
+    def get_daily_backup_summary(self) -> Dict:
+        """Hämta sammanfattning av dagens backups"""
+        daily_info_file = self.daily_backup_dir / "daily_info.json"
+        
+        if not daily_info_file.exists():
+            return {
+                'date': self.today,
+                'sessions_count': 0,
+                'total_size_mb': 0,
+                'sessions': []
+            }
+        
+        try:
+            with open(daily_info_file, 'r') as f:
+                daily_info = json.load(f)
+            
+            return {
+                'date': daily_info['date'],
+                'sessions_count': daily_info['sessions_count'],
+                'total_size_mb': daily_info['total_size_bytes'] / (1024 * 1024),
+                'sessions': daily_info['sessions']
+            }
+        except Exception as e:
+            logging.error(f"Fel vid läsning av daily_info: {e}")
+            return {
+                'date': self.today,
+                'sessions_count': 0,
+                'total_size_mb': 0,
+                'sessions': []
+            }
 
 # ========================================
-# FÖRENKLAD LOG FILE MONITOR
+# FÖRENKLAD LOG FILE MONITOR (oförändrad)
 # ========================================
 class SimplifiedLogFileMonitor:
     """
@@ -298,7 +405,6 @@ class SimplifiedLogFileMonitor:
         logging.info(f"Event cutoff: {self.cutoff_time} (15 min grace period)")
         logging.info(f"🔧 FÖRENKLAD: Enkel transkriptionslogik - 'senaste txt-fil'")
         logging.info(f"🕐 3B: Timestamp-cutoff för transkriptioner")
-        logging.info(f"🔥 FIX: RDS event cleanup inkluderad i workspace rensning")
     
     def get_latest_rds_log(self) -> Optional[Path]:
         """BEVARAR: Hitta senaste RDS continuous log"""
@@ -321,7 +427,6 @@ class SimplifiedLogFileMonitor:
                 
                 # BEVARAR DIN FUNGERANDE FILTER 1: Bara filer efter cutoff
                 if file_mtime < self.cutoff_time:
-                    logging.debug(f"🔥 CUTOFF: Skippar gammal event-logg: {log_file.name} (äldre än {self.cutoff_time})")
                     continue
                 
                 # BEVARAR DIN FUNGERANDE FILTER 2: Skippa redan processade
@@ -518,7 +623,7 @@ class SimplifiedLogFileMonitor:
         except FileNotFoundError:
             pass
         except Exception as e:
-            logging.error(f"Fel vid läsning av RDS-log: {e}")
+            logging.error(f"Fel vid läsning av RDS-logg: {e}")
         
         return new_data
     
@@ -602,15 +707,15 @@ class SimplifiedLogFileMonitor:
             return None
 
 # ========================================
-# FÖRENKLAD DISPLAY CONTROLLER
+# UPPDATERAD DISPLAY CONTROLLER med DAGLIG BACKUP
 # ========================================
 class SimplifiedDisplayController:
     """
-    FÖRENKLAD Display Controller med session-backup och enkel transkriptlogik + VMA End Events
+    UPPDATERAD Display Controller med DAGLIG backup-strategi
     """
     
     def __init__(self):
-        # 1. FÖRSTA: Skapa session backup och rensa workspace
+        # 1. FÖRSTA: Skapa DAGLIG backup och rensa workspace
         self._perform_startup_backup()
         
         # 2. SEDAN: Initiera monitor och display manager
@@ -618,28 +723,29 @@ class SimplifiedDisplayController:
         self.display_manager = DisplayManager(log_dir=str(LOGS_DIR))
         self.startup_time = datetime.now()
         
-        logging.info("FÖRENKLAD DisplayController initialiserad")
+        logging.info("🔄 UPPDATERAD DisplayController initialiserad med DAGLIG backup")
+        logging.info("📅 DAGLIG backup-strategi: backup/daily_YYYYMMDD/session_N_HHMMSS/")
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE")
-        logging.info("🔧 FÖRENKLAD: Enkel transkriptlogik + session backup")
+        logging.info("🔧 FÖRENKLAD: Enkel transkriptlogik + daglig backup")
         logging.info("🕐 3B: Timestamp-cutoff implementerat")
         logging.info("🚨 VMA End Events: Stöds för korrekt display-växling")
-        logging.info("🔥 FIX: RDS event cleanup fixad - gamla events läses inte in")
     
     def _perform_startup_backup(self):
-        """FIXAD: Genomför session-backup vid startup"""
+        """Genomför DAGLIG backup vid startup"""
         try:
-            backup_manager = SessionBackupManager(PROJECT_DIR, LOGS_DIR)
+            backup_manager = DailyBackupManager(PROJECT_DIR, LOGS_DIR)
             
-            # Skapa backup av föregående session
-            backup_dir = backup_manager.create_session_backup()
+            # Skapa dagens backup - lägg till ny session
+            session_backup_dir = backup_manager.create_daily_backup()
             
-            if backup_dir:
-                logging.info(f"✅ Session-backup skapad: {backup_dir.name}")
+            if session_backup_dir:
+                daily_summary = backup_manager.get_daily_backup_summary()
+                logging.info(f"✅ Daglig backup komplett: {session_backup_dir.name}")
+                logging.info(f"📅 Dagens sammanfattning: {daily_summary['sessions_count']} sessioner, {daily_summary['total_size_mb']:.1f} MB")
                 
-                # FIXAD: Rensa workspace för ny session (inkluderar RDS events)
+                # Rensa workspace för ny session
                 backup_manager.cleanup_workspace_after_backup()
                 logging.info("🧹 Workspace rensat - redo för ny session")
-                logging.info("🔥 FIX: RDS event-loggar rensades korrekt")
             else:
                 logging.info("ℹ️ Ingen backup behövdes - startar med rent workspace")
                 
@@ -648,7 +754,7 @@ class SimplifiedDisplayController:
             logging.warning("⚠️ Fortsätter utan backup - systemet kan ändå fungera")
     
     def start(self):
-        """Starta FÖRENKLAD display-kontroll"""
+        """Starta FÖRENKLAD display-kontroll med DAGLIG backup"""
         if not self.display_manager.display_available:
             logging.warning("Display inte tillgänglig - kör i simulator-läge")
         
@@ -665,11 +771,11 @@ class SimplifiedDisplayController:
         transcription_thread.start()
         
         logging.info("📡 FÖRENKLAD monitoring aktiv")
-        logging.info("✅ Session-backup genomförd")
+        logging.info("✅ Daglig backup genomförd")
         logging.info("🔧 Enkel transkriptlogik: 'senaste txt-fil efter startup'")
-        logging.info("🕐 3B: Timestamp-cutoff för transkriptioner")
+        logging.info("🕐 3B: Bara transkript efter systemstart")
+        logging.info("📅 DAGLIG backup: Organiserad per dag istället av per session")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
-        logging.info("🔥 FIX: Gamla RDS events rensas nu korrekt")
     
     def stop(self):
         """Stoppa display-kontroll"""
@@ -781,7 +887,7 @@ class SimplifiedDisplayController:
 # MAIN ENTRY POINT
 # ========================================
 def main():
-    """FÖRENKLAD main function"""
+    """FÖRENKLAD main function med DAGLIG backup"""
     
     # Setup logging
     log_format = "%(asctime)s - DISPLAY - %(levelname)s - %(message)s"
@@ -794,21 +900,19 @@ def main():
         ]
     )
     
-    logging.info("🔥 FIXAD Display Monitor - Session backup med komplett RDS event cleanup")
+    logging.info("📅 UPPDATERAD Display Monitor - DAGLIG Backup-strategi")
     logging.info("=" * 80)
-    logging.info("🔥 FIX: RDS event-loggar rensas nu korrekt vid workspace cleanup")
-    logging.info("✅ FÖRENKLADE ANVÄNDARKRAV:")
-    logging.info("  1. Session-backup av alla loggar vid startup")
-    logging.info("  2. 3B: Timestamp-cutoff för transkriptioner")
-    logging.info("  3. Enkel logik: 'Vilken txt-fil är nyast?'")
-    logging.info("  4. Workspace rensas för ny session")
-    logging.info("  5. Inga komplicerade matchningar")
-    logging.info("  6. VMA End Events: Korrekt display-växling från VMA till IDLE")
-    logging.info("🔧 HYBRID: Session-backup + workspace cleanup")
+    logging.info("✅ IMPLEMENTERAT:")
+    logging.info("  📅 DAGLIG backup-struktur: backup/daily_YYYYMMDD/session_N_HHMMSS/")
+    logging.info("  🔢 Automatisk session-numrering inom dagen")
+    logging.info("  📊 Daglig metadata + session-metadata")
+    logging.info("  🗂️ Organiserad backup per dag istället för per session")
+    logging.info("  🧹 Bättre cleanup-möjligheter (radera hela dagar)")
+    logging.info("  🔍 Enklare forensisk analys (\"Vad hände 10 juni?\")")
+    logging.info("🔧 HYBRID: Daglig backup + workspace cleanup")
     logging.info("🕐 3B: Bara transkript efter systemstart")
     logging.info("💡 ENKELT: Senaste txt-fil = senaste transkription")
     logging.info("🚨 VMA FIX: VMA end events hanteras för korrekt display-växling")
-    logging.info("🔥 CRITICAL FIX: RDS event-loggar rensas korrekt från workspace")
     
     # Kontrollera att logs-katalog finns
     if not LOGS_DIR.exists():
@@ -821,18 +925,18 @@ def main():
     BACKUP_DIR.mkdir(exist_ok=True)
     (LOGS_DIR / "screen").mkdir(exist_ok=True)
     
-    # Skapa och starta FÖRENKLAD display controller
+    # Skapa och starta FÖRENKLAD display controller med DAGLIG backup
     try:
         controller = SimplifiedDisplayController()
         controller.start()
         
-        logging.info("✅ FIXAD Display Monitor aktiv")
+        logging.info("✅ FÖRENKLAD Display Monitor aktiv med DAGLIG backup")
         logging.info("🏠 Startup-skärm visas nu")
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE → repeat")
-        logging.info("🔧 Session-backup genomförd")
+        logging.info("📅 Daglig backup genomförd")
         logging.info("💡 Enkel transkriptlogik aktiv")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
-        logging.info("🔥 CRITICAL FIX: Gamla RDS events läses inte längre in")
+        logging.info("🗂️ DAGLIG backup: Organiserad och lätthanterlig struktur")
         logging.info("Tryck Ctrl+C för att stoppa")
         
         # Keep running
@@ -850,7 +954,7 @@ def main():
                 logging.info(f"📊 Status: {current_state} mode, {screenshots} skärmdumpar, {processed_events} events, {processed_trans} transkriptioner")
             
     except KeyboardInterrupt:
-        logging.info("Keyboard interrupt - stoppar FIXAD display monitor")
+        logging.info("Keyboard interrupt - stoppar FÖRENKLAD display monitor")
     except Exception as e:
         logging.error(f"Fatal fel: {e}")
         import traceback
@@ -859,7 +963,7 @@ def main():
         if 'controller' in locals():
             controller.stop()
         
-        logging.info("FIXAD Display Monitor stoppad - RDS event cleanup fungerar nu!")
+        logging.info("FÖRENKLAD Display Monitor stoppad - med DAGLIG backup och VMA End Events!")
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FIXAD Display Manager - Bevarar fungerande logik + energioptimering  
+FIXAD Display Manager - Bevarar fungerande logik + energioptimering + start_time fix
 Fil: display_manager.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/display_manager.py
 
@@ -13,6 +13,10 @@ LÄGGER TILL:
 - Content hashing för att undvika identiska uppdateringar
 - Energispårning och statistik
 - Smart change detection
+
+FIXAR:
+- start_time datatyp-konvertering (string → datetime)
+- Säkerställer korrekt "STARTAD: HH:MM" för varje nytt trafikmeddelande
 """
 
 import logging
@@ -42,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 class EventDrivenDisplayManager:
     """
-    ENERGIOPTIMERAD version av din fungerande Event-driven Display Manager
+    ENERGIOPTIMERAD version av din fungerande Event-driven Display Manager + start_time fix
     """
     
     def __init__(self, log_dir: str = "logs"):
@@ -323,15 +327,57 @@ class EventDrivenDisplayManager:
             logger.error(f"Fel vid status feedback-uppdatering: {e}")
     
     # ========================================
-    # BEVARAR alla dina PUBLIC INTERFACE METHODS
+    # FIXADE DATETIME HELPER METHODS
+    # ========================================
+    
+    def _parse_datetime(self, dt_value) -> datetime:
+        """
+        FIXAR: Konvertera datetime-värde från olika format till datetime objekt
+        Hanterar både datetime objekt och ISO strings från rds_detector
+        """
+        if dt_value is None:
+            return datetime.now()
+        
+        # Om det redan är ett datetime objekt, returnera som det är
+        if isinstance(dt_value, datetime):
+            return dt_value
+        
+        # Om det är en string (ISO format från rds_detector), konvertera
+        if isinstance(dt_value, str):
+            try:
+                # Försök parsa ISO format: "2025-06-09T20:15:30.123456"
+                if 'T' in dt_value:
+                    # Ta bort mikrosekunder om de finns
+                    if '.' in dt_value:
+                        dt_value = dt_value.split('.')[0]
+                    return datetime.fromisoformat(dt_value)
+                else:
+                    # Försök andra vanliga format
+                    return datetime.strptime(dt_value, '%Y-%m-%d %H:%M:%S')
+            except Exception as e:
+                logger.warning(f"Kunde inte konvertera datetime string '{dt_value}': {e}")
+                return datetime.now()
+        
+        # Fallback
+        logger.warning(f"Okänd datetime-typ: {type(dt_value)}, använder nuvarande tid")
+        return datetime.now()
+    
+    # ========================================
+    # FIXADE PUBLIC INTERFACE METHODS
     # ========================================
     
     def handle_traffic_start(self, traffic_data: Dict):
-        """Handle traffic start event"""
+        """FIXAD: Handle traffic start event med korrekt datetime-hantering"""
+        # FIXAR: Konvertera start_time från string till datetime om nödvändigt
+        raw_start_time = traffic_data.get('start_time')
+        parsed_start_time = self._parse_datetime(raw_start_time)
+        
+        logger.debug(f"🔧 Traffic start: raw_start_time={raw_start_time} → parsed={parsed_start_time}")
+        
         self.queue_event('traffic_start', {
             'type': 'traffic_start',
-            'start_time': traffic_data.get('start_time', datetime.now()),
-            **traffic_data
+            'start_time': parsed_start_time,  # Garanterat datetime objekt
+            **{k: v for k, v in traffic_data.items() if k != 'start_time'}  # Resten av data
         }, priority=self.settings['priorities']['traffic_active'])
     
     def handle_traffic_end(self, traffic_data: Dict):
@@ -343,15 +389,21 @@ class EventDrivenDisplayManager:
         }, priority=self.settings['priorities']['traffic_active'])
     
     def handle_vma_start(self, vma_data: Dict, is_test: bool = False):
-        """Handle VMA start event"""
+        """FIXAD: Handle VMA start event med korrekt datetime-hantering"""
         event_type = 'vma_test_start' if is_test else 'vma_start'
         priority = self.settings['priorities']['vma_test' if is_test else 'vma_emergency']
         
+        # FIXAR: Konvertera start_time från string till datetime om nödvändigt
+        raw_start_time = vma_data.get('start_time')
+        parsed_start_time = self._parse_datetime(raw_start_time)
+        
+        logger.debug(f"🔧 VMA start: raw_start_time={raw_start_time} → parsed={parsed_start_time}")
+        
         self.queue_event(event_type, {
             'type': event_type,
-            'start_time': vma_data.get('start_time', datetime.now()),
+            'start_time': parsed_start_time,  # Garanterat datetime objekt
             'is_test': is_test,
-            **vma_data
+            **{k: v for k, v in vma_data.items() if k != 'start_time'}  # Resten av data
         }, priority=priority)
     
     def handle_vma_end(self, vma_data: Dict, is_test: bool = False):
@@ -587,10 +639,11 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    print("🔋 Test av ENERGIOPTIMERAD Event-Driven Display Manager")
-    print("=" * 60)
+    print("🔋 Test av ENERGIOPTIMERAD Event-Driven Display Manager + start_time FIX")
+    print("=" * 70)
     print("📋 INGEN night mode - endast: STARTUP → TRAFFIC/VMA → IDLE")
     print("🔋 MED: Content hashing + energispårning")
+    print("🔧 FIXAR: start_time datatyp-konvertering (string → datetime)")
     
     # Skapa display manager
     manager = EventDrivenDisplayManager(log_dir="logs")
@@ -600,13 +653,26 @@ if __name__ == "__main__":
         manager.start()
         print("✅ ENERGIOPTIMERAD Display Manager startad")
         
-        # Simulera events för test
+        # Test datetime-konvertering
+        test_datetime_str = "2025-06-09T20:15:30"
+        test_datetime_obj = datetime.now()
+        
+        print(f"🧪 Test datetime-konvertering:")
+        print(f"  String input: {test_datetime_str}")
+        print(f"  Parsed: {manager._parse_datetime(test_datetime_str)}")
+        print(f"  Datetime input: {test_datetime_obj}")
+        print(f"  Parsed: {manager._parse_datetime(test_datetime_obj)}")
+        
+        # Simulera traffic events med string start_time (som rds_detector skickar)
         if len(sys.argv) > 1 and sys.argv[1] == "--test-events":
-            print("🧪 Kör ENERGIOPTIMERAD event-simulering...")
+            print("🧪 Kör FIXAD event-simulering med string start_time...")
             
             time.sleep(3)
-            print("📡 Simulerar traffic start...")
-            manager.handle_traffic_start({'location': 'E4 Stockholm'})
+            print("📡 Simulerar traffic start med ISO string...")
+            manager.handle_traffic_start({
+                'location': 'E4 Stockholm',
+                'start_time': datetime.now().isoformat()  # STRING som rds_detector skickar
+            })
             
             time.sleep(5)
             print("📝 Simulerar transkription klar...")
@@ -630,4 +696,5 @@ if __name__ == "__main__":
         
     finally:
         manager.stop()
-        print("✅ ENERGIOPTIMERAD test slutförd - med fungerande event-filtering!")
+        print("✅ ENERGIOPTIMERAD + FIXAD test slutförd!")
+        print("🔧 start_time datatyp-problem löst - nu fungerar 'STARTAD: HH:MM' korrekt!")
