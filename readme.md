@@ -232,11 +232,16 @@ sudo make install
 sudo ldconfig
 ```
 
-Test the installation:
+**Verify RTL-SDR installation:**
 ```bash
 rtl_test -t
 ```
-Expected output: "RTL-SDR Blog V4 Detected"
+**Expected output:** "RTL-SDR Blog V4 Detected"
+
+**If test fails:**
+- Check USB connection
+- Replug RTL-SDR device
+- Verify it's RTL-SDR Blog V4 (other versions may not work)
 
 ### Step 3: Install Redsea RDS Decoder
 
@@ -249,11 +254,15 @@ cd build
 meson compile
 ```
 
-Test the installation:
+**Verify Redsea installation:**
 ```bash
 ./redsea --help
 ```
-Expected output: Help text without errors
+**Expected output:** Help text without errors
+
+**If compilation fails:**
+- Ensure all build tools are installed from Step 1
+- Check for missing dependencies in error messages
 
 ### Step 4: Install E-paper Display Library
 
@@ -265,30 +274,109 @@ sudo cp -r waveshare_epd /usr/local/lib/python3.11/dist-packages/
 sudo chmod -R 755 /usr/local/lib/python3.11/dist-packages/waveshare_epd
 ```
 
-Test the installation:
+**Verify e-paper library installation:**
 ```bash
-python3 -c "from waveshare_epd import epd4in26; print('OK')"
+python3 -c "from waveshare_epd import epd4in26; print('✅ E-paper library OK')"
 ```
-Expected output: "OK"
+**Expected output:** "✅ E-paper library OK"
 
-### Step 5: Setup AI Environment
+**If import fails:**
+- Verify SPI is enabled: `sudo raspi-config`
+- Check GPIO connections to display
+- Verify Python version (adjust path if needed)
+
+### Step 5: Setup AI Environment (CRITICAL STEP)
+
+**This step is essential for transcription functionality**
 
 ```bash
-# Create Python virtual environment
+# Create Python virtual environment for AI
 python3 -m venv ~/vma_env
+
+# Activate the AI environment
 source ~/vma_env/bin/activate
 
-# Install AI dependencies
-pip install transformers torch torchaudio
+# Verify we're in the correct environment
+echo "🔍 Active Python environment:"
+which python
+python --version
 ```
+
+**Install PyTorch (CPU version optimized for Raspberry Pi):**
+```bash
+# Install PyTorch CPU version (takes 5-10 minutes)
+echo "📦 Installing PyTorch CPU version..."
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+**Install AI dependencies:**
+```bash
+# Install Transformers and related packages (takes 3-5 minutes)
+echo "📦 Installing Transformers and dependencies..."
+pip install transformers datasets tokenizers
+
+# Optional: Install standard Whisper as fallback
+pip install openai-whisper
+```
+
+**CRITICAL: Verify AI installation:**
+```bash
+# Test PyTorch installation
+python -c "
+import torch
+print(f'✅ PyTorch version: {torch.__version__}')
+print(f'✅ PyTorch device: {torch.device(\"cpu\")}')
+"
+
+# Test Transformers installation
+python -c "
+from transformers import pipeline
+print('✅ Transformers pipeline imported successfully')
+"
+
+# Test KBWhisper model loading (this will download the model - takes 2-3 minutes first time)
+python -c "
+try:
+    from transformers import pipeline
+    whisper = pipeline('automatic-speech-recognition', model='KBLab/kb-whisper-medium')
+    print('✅ KBWhisper model loaded successfully')
+    print('🎯 AI transcription ready!')
+except Exception as e:
+    print(f'❌ Model loading failed: {e}')
+    print('ℹ️ This will be retried automatically during first transcription')
+"
+
+# Deactivate environment when done testing
+deactivate
+```
+
+**Expected outputs:**
+- ✅ PyTorch version: 2.x.x
+- ✅ Transformers pipeline imported successfully  
+- ✅ KBWhisper model loaded successfully
+- 🎯 AI transcription ready!
+
+**AI Installation Troubleshooting:**
+
+**If PyTorch installation fails:**
+```bash
+# Try with more memory allocated
+sudo nano /etc/dphys-swapfile
+# Change CONF_SWAPSIZE=100 to CONF_SWAPSIZE=1024
+sudo systemctl restart dphys-swapfile
+# Retry PyTorch installation
+```
+
+**If model loading fails:**
+- Check internet connection (needed only for first download)
+- Verify sufficient disk space: `df -h` (need ~2GB free)
+- Model will auto-download during first transcription if this test fails
 
 **Alternative: Use Standard Whisper for Other Languages**
 
 To use standard OpenAI Whisper instead of KBWhisper (for non-Swedish languages):
 ```bash
-# Activate environment and install standard whisper
-source ~/vma_env/bin/activate
-pip install openai-whisper
+# Already installed above with: pip install openai-whisper
 ```
 
 Then edit `transcriber.py` and change line:
@@ -401,7 +489,56 @@ rtl_fm -f $(python3 -c "from config import FREQUENCY; print(f'{FREQUENCY/1000000
 ```
 You should hear clear P4 audio. If not, check antenna positioning and adjust GAIN in config.py.
 
-**Then test the display system:**
+**Test AI transcription system:**
+```bash
+# Test AI environment and model loading
+cd ~/rds_logger3
+python3 -c "
+try:
+    from transcriber import AudioTranscriber
+    print('✅ transcriber.py can be imported')
+    transcriber = AudioTranscriber()
+    print(f'✅ AudioTranscriber created: {transcriber.is_initialized}')
+    print(f'📁 Model: {transcriber.model_name}')
+    print(f'🐍 Python: {transcriber.venv_python}')
+    
+    # Test AI environment
+    stats = transcriber.get_stats()
+    print(f'📊 AI Status: {stats}')
+except Exception as e:
+    print(f'❌ Transcriber error: {e}')
+    print('🔧 Run AI troubleshooting commands below')
+"
+```
+
+**If AI test fails, run diagnostic:**
+```bash
+# Check AI environment
+echo "🔍 Checking AI environment..."
+if [ -d ~/vma_env ]; then
+    echo "✅ Virtual environment exists: ~/vma_env"
+    source ~/vma_env/bin/activate
+    python -c "
+import sys
+print(f'Python: {sys.executable}')
+try:
+    import torch
+    print(f'✅ PyTorch: {torch.__version__}')
+except:
+    print('❌ PyTorch missing - rerun Step 5')
+try:
+    from transformers import pipeline
+    print('✅ Transformers available')
+except:
+    print('❌ Transformers missing - rerun Step 5')
+"
+    deactivate
+else
+    echo "❌ Virtual environment missing - rerun Step 5"
+fi
+```
+
+**Test the display system:**
 ```bash
 # Test display system
 python3 test_display_functionality.py
@@ -413,12 +550,21 @@ Expected output: "9/9 tests PASSED"
 python3 test_display_live.py
 ```
 
-**Finally, test the complete system:**
+**Test complete system:**
 ```bash
 # Test manual system start
 ./start_vma_with_display.sh
 ```
 System should start without errors and show startup screen. Press Ctrl+C to stop.
+
+**Check transcription works:**
+```bash
+# Generate test audio and verify transcription
+python3 vma_simulator.py
+# Wait 30 seconds, then check for transcription files:
+ls -la logs/transcriptions/
+# Should see .txt files with transcribed content
+```
 
 ### Step 8: Setup Automatic Startup
 
@@ -431,14 +577,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable vma-system.service
 ```
 
-Test automatic startup:
+**Test automatic startup:**
 ```bash
 sudo systemctl start vma-system.service
 sudo systemctl status vma-system.service
 ```
 Expected output: "Active: active (running)"
 
-Test reboot functionality:
+**Test reboot functionality:**
 ```bash
 sudo reboot
 ```
@@ -460,31 +606,171 @@ Add these lines to the crontab:
 0 4 * * 0 cd /home/chris/rds_logger3 && python3 cleanup.py --weekly 2>&1 | logger -t vma-cleanup
 ```
 
-### Step 10: Verify Installation
+### Step 10: Final Verification
 
+**Check system status:**
 ```bash
-# Check system status
 sudo systemctl status vma-system.service
 ```
 Expected output: "Active: active (running)"
 
+**Check RDS reception:**
 ```bash
-# View system logs
-sudo journalctl -u vma-system.service -f
-```
-
-```bash
-# Verify RDS reception is working
 tail -f logs/rds_continuous_$(date +%Y%m%d).log
 ```
 You should see regular RDS data updates. If not, check antenna and signal strength.
 
+**Verify transcription is working:**
 ```bash
-# Check that files are being created
+# Check recent system logs for transcription activity
+grep -i "transcrib" logs/system_$(date +%Y%m%d).log | tail -5
+
+# Look for successful transcription messages:
+# "✅ Transcription completed"
+# "💾 Saved to: filename.txt"
+```
+
+**Check file creation:**
+```bash
 ls -la logs/
+ls -la logs/audio/
+ls -la logs/transcriptions/
 ```
 
 The e-paper display should show current system status and indicate "RDS: Active".
+
+**Complete system verification:**
+```bash
+# Test with simulator to verify end-to-end functionality
+python3 vma_simulator.py
+
+# After 2 minutes, check results:
+echo "📁 Audio files:"
+ls -la logs/audio/ | tail -3
+echo "📝 Transcription files:"
+ls -la logs/transcriptions/ | tail -3
+echo "🖥️ Display images:"
+ls -la logs/screen/ | tail -3
+```
+
+All three directories should contain recent files if system is working correctly.
+
+---
+
+## Troubleshooting Common Issues
+
+### AI/Transcription Problems
+
+**Problem: "Transcription failed" in logs**
+```bash
+# Diagnostic commands:
+cd ~/rds_logger3
+python3 -c "
+from transcriber import AudioTranscriber
+transcriber = AudioTranscriber()
+print(f'Initialized: {transcriber.is_initialized}')
+print(f'Stats: {transcriber.get_stats()}')
+"
+
+# Check AI environment:
+source ~/vma_env/bin/activate
+python -c "
+import torch
+from transformers import pipeline
+print('✅ AI environment OK')
+"
+deactivate
+```
+
+**Solution if AI environment broken:**
+```bash
+# Recreate AI environment
+rm -rf ~/vma_env
+python3 -m venv ~/vma_env
+source ~/vma_env/bin/activate
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install transformers datasets tokenizers
+deactivate
+```
+
+**Problem: "None of PyTorch, TensorFlow >= 2.0, or Flax have been found"**
+- This means PyTorch installation failed
+- Rerun Step 5 completely
+- Check available disk space: `df -h`
+- Increase swap if needed: edit `/etc/dphys-swapfile`
+
+### System Not Starting
+
+**Problem: System service fails to start**
+```bash
+# Check service status and logs
+sudo systemctl status vma-system.service
+sudo journalctl -u vma-system.service -f
+
+# Manual start for debugging
+cd ~/rds_logger3
+./start_vma_with_display.sh
+```
+
+**Problem: RTL-SDR not detected**
+```bash
+# Test RTL-SDR
+rtl_test -t
+
+# If fails:
+lsusb  # Should show RTL2838 device
+sudo udevadm control --reload-rules
+# Replug USB device
+```
+
+### Reception Problems
+
+**Problem: No RDS data in logs**
+```bash
+# Test FM reception manually
+rtl_fm -f 103.3M -s 200000 -g 30 - | aplay -r 22050 -f S16_LE
+
+# If no audio or poor quality:
+# 1. Check antenna connection
+# 2. Try different gain values (20-45)
+# 3. Adjust antenna position
+# 4. Verify correct frequency for your location
+```
+
+**Problem: Audio recorded but no transcription**
+- Check AI environment (see AI troubleshooting above)
+- Verify transcription files: `ls -la logs/transcriptions/`
+- Check audio file size: `ls -lh logs/audio/` (should be >500KB)
+
+### Display Problems
+
+**Problem: Display not updating**
+```bash
+# Test display manually
+python3 test_display_functionality.py
+
+# Check display logs
+grep -i "display" logs/system_$(date +%Y%m%d).log
+
+# Verify SPI enabled
+sudo raspi-config  # Interface Options → SPI → Enable
+```
+
+### Storage Problems
+
+**Problem: Disk full**
+```bash
+# Check disk usage
+df -h
+du -sh logs/ backup/
+
+# Emergency cleanup
+python3 cleanup.py --emergency
+
+# Manual cleanup if needed
+rm -rf backup/session_* # Remove old backups
+rm logs/audio/*.wav     # Remove old audio files
+```
 
 ---
 
@@ -579,6 +865,12 @@ python3 cleanup.py --emergency  # If storage critical
 3. Replug USB device
 4. Restart system
 
+**If transcription not working:**
+1. Check AI environment: `source ~/vma_env/bin/activate && python -c "import torch; from transformers import pipeline; print('OK')"`
+2. Verify audio files exist: `ls -la logs/audio/`
+3. Check transcription logs: `grep -i transcrib logs/system_$(date +%Y%m%d).log`
+4. If AI environment broken, recreate it (see troubleshooting above)
+
 **If no emergency events detected:**
 1. Verify RDS data flow: `tail -f logs/rds_continuous_$(date +%Y%m%d).log`
 2. Test with VMA simulator: `python3 vma_simulator.py`
@@ -604,6 +896,6 @@ python3 cleanup.py --emergency  # If storage critical
 - E-paper display: Waveshare technology
 
 **Created:** 2025-06-08  
-**Version:** 4.1 (Production ready with automatic startup)  
+**Version:** 4.2 (Production ready with improved AI installation guide)  
 **Designed for:** Swedish emergency broadcast system  
 **Tested on:** Raspberry Pi 5, RTL-SDR Blog V4, Waveshare 4.26" display

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-UPPDATERAD Display Monitor - DAGLIG Backup-strategi istället för session-baserad
+UPPDATERAD Display Monitor - RDS-INDIKATOR för döva användare
 Fil: display_monitor.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/display_monitor.py
 
-STORA FÖRÄNDRINGAR:
-- SessionBackupManager → DailyBackupManager
-- backup/session_YYYYMMDD_HHMMSS/ → backup/daily_YYYYMMDD/session_N_HHMMSS/
-- Automatisk session-numrering inom dagen
-- Daglig metadata istället för session-metadata
-- Konflikthantering vid flera omstarter samma dag
+NY FUNKTION:
+- RDS-mottagningsindikator för döva användare
+- Smart timing som INTE triggar extra uppdateringar
+- Passiv visning - bara "åker med" befintliga uppdateringar
+
+STRUKTUR:
+- backup/daily_YYYYMMDD/session_N_HHMMSS/ (oförändrat)
+- RDS-timing spåras från befintliga loggar
+- Ingen extra polling eller uppdateringsfrekvens
 """
 
 import os
@@ -32,7 +35,7 @@ except ImportError:
     sys.exit(1)
 
 # ========================================
-# CONFIGURATION - DAGLIG BACKUP
+# CONFIGURATION - DAGLIG BACKUP (oförändrat)
 # ========================================
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -58,7 +61,7 @@ STATUS_UPDATE_INTERVAL = 900  # seconds (15 minuter)
 STARTUP_CUTOFF_MINUTES = 15  # Bara events från senaste 15 min vid start
 
 # ========================================
-# DAGLIG BACKUP SYSTEM - NY ARKITEKTUR
+# DAGLIG BACKUP SYSTEM - OFÖRÄNDRAT
 # ========================================
 class DailyBackupManager:
     """
@@ -372,11 +375,11 @@ class DailyBackupManager:
             }
 
 # ========================================
-# FÖRENKLAD LOG FILE MONITOR (oförändrad)
+# FÖRENKLAD LOG FILE MONITOR med RDS-INDIKATOR
 # ========================================
 class SimplifiedLogFileMonitor:
     """
-    FÖRENKLAD version med enkel transkriptionshantering
+    FÖRENKLAD version med RDS-mottagningsindikator för döva användare
     """
     
     def __init__(self):
@@ -400,11 +403,16 @@ class SimplifiedLogFileMonitor:
         # ENERGIOPTIMERING: Spåra sista status update
         self.last_status_update = datetime.now() - timedelta(minutes=20)
         
-        logging.info(f"FÖRENKLAD LogFileMonitor initialiserad")
+        # NY: RDS-mottagningsindikator
+        self.last_rds_time = None
+        self.rds_status_cache = None  # Cache för att undvika onödiga läsningar
+        
+        logging.info(f"FÖRENKLAD LogFileMonitor initialiserad MED RDS-INDIKATOR")
         logging.info(f"Startup: {self.startup_time}")
         logging.info(f"Event cutoff: {self.cutoff_time} (15 min grace period)")
         logging.info(f"🔧 FÖRENKLAD: Enkel transkriptionslogik - 'senaste txt-fil'")
         logging.info(f"🕐 3B: Timestamp-cutoff för transkriptioner")
+        logging.info(f"📡 NY: RDS-mottagningsindikator för döva användare")
     
     def get_latest_rds_log(self) -> Optional[Path]:
         """BEVARAR: Hitta senaste RDS continuous log"""
@@ -500,6 +508,116 @@ class SimplifiedLogFileMonitor:
             return transcription_data
         
         return None
+    
+    def get_rds_status(self) -> Dict:
+        """
+        NY: Hämta RDS-mottagningsstatus för döva användare
+        SMART: Använder cache för att inte läsa filen för ofta
+        """
+        now = datetime.now()
+        
+        # Cache i 30 sekunder för att undvika onödig diskläsning
+        if (self.rds_status_cache and 
+            hasattr(self, 'rds_cache_time') and 
+            (now - self.rds_cache_time).total_seconds() < 30):
+            return self.rds_status_cache
+        
+        try:
+            rds_log = self.get_latest_rds_log()
+            if not rds_log or not rds_log.exists():
+                status = {
+                    'last_rds_time': None,
+                    'status': 'ingen',
+                    'indicator': '✕',
+                    'time_str': 'Ingen'
+                }
+                self.rds_status_cache = status
+                self.rds_cache_time = now
+                return status
+            
+            # Läs sista RDS-entryn från filen
+            last_rds_time = None
+            try:
+                with open(rds_log, 'r') as f:
+                    # Läs sista raderna
+                    lines = f.readlines()
+                    if lines:
+                        # Hitta senaste giltiga JSON-rad
+                        for line in reversed(lines[-10:]):  # Kolla senaste 10 raderna
+                            line = line.strip()
+                            if line:
+                                try:
+                                    rds_entry = json.loads(line)
+                                    if 'ts' in rds_entry:
+                                        # Konvertera ISO timestamp till datetime
+                                        timestamp_str = rds_entry['ts']
+                                        last_rds_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                        break
+                                except (json.JSONDecodeError, ValueError):
+                                    continue
+            except Exception as e:
+                logging.debug(f"Fel vid läsning av RDS-logg: {e}")
+            
+            # Avgör status baserat på ålder
+            if last_rds_time:
+                age_minutes = (now - last_rds_time).total_seconds() / 60
+                
+                if age_minutes < 5:
+                    status = 'aktiv'
+                    indicator = '●'
+                elif age_minutes < 15:
+                    status = 'svag'  
+                    indicator = '○'
+                else:
+                    status = 'gammal'
+                    indicator = '✕'
+                
+                # Runda tid till 5-min intervall för stabil hash
+                rounded_time = self._round_time_to_5min(last_rds_time)
+                time_str = rounded_time.strftime('%H:%M')
+            else:
+                status = 'ingen'
+                indicator = '✕'
+                time_str = 'Ingen'
+            
+            rds_status = {
+                'last_rds_time': last_rds_time,
+                'status': status,
+                'indicator': indicator,
+                'time_str': time_str
+            }
+            
+            # Cache resultatet
+            self.rds_status_cache = rds_status
+            self.rds_cache_time = now
+            
+            return rds_status
+            
+        except Exception as e:
+            logging.error(f"Fel vid hämtning av RDS-status: {e}")
+            # Fallback
+            fallback_status = {
+                'last_rds_time': None,
+                'status': 'fel',
+                'indicator': '?',
+                'time_str': 'Fel'
+            }
+            self.rds_status_cache = fallback_status
+            self.rds_cache_time = now
+            return fallback_status
+    
+    def _round_time_to_5min(self, dt: datetime) -> datetime:
+        """
+        Runda tid till närmaste 5-minuters intervall för stabil hash
+        Exempel: 14:23 → 14:25, 14:27 → 14:25
+        """
+        minute = dt.minute
+        rounded_minute = round(minute / 5) * 5
+        if rounded_minute >= 60:
+            rounded_minute = 0
+            dt = dt.replace(hour=dt.hour + 1)
+        
+        return dt.replace(minute=rounded_minute, second=0, microsecond=0)
     
     def _parse_transcription_file(self, trans_file: Path) -> Optional[Dict]:
         """BEVARAR: Parsa transkriptionsfil och extrahera nyckelinformation"""
@@ -628,7 +746,7 @@ class SimplifiedLogFileMonitor:
         return new_data
     
     def update_system_status(self):
-        """BEVARAR: Uppdatera systemstatus"""
+        """BEVARAR: Uppdatera systemstatus + RDS-status"""
         rds_data = self.read_new_rds_data()
         if rds_data:
             self.system_status['rds_active'] = True
@@ -639,6 +757,10 @@ class SimplifiedLogFileMonitor:
             self.system_status['rds_active'] = False
         
         self.system_status['events_today'] = len(self.processed_events)
+        
+        # NY: Uppdatera RDS-status för display
+        rds_status = self.get_rds_status()
+        self.system_status['rds_status'] = rds_status
     
     def detect_events_from_logs(self) -> List[Dict]:
         """BEVARAR DIN FUNGERANDE VERSION: Detektera ENDAST nya events"""
@@ -707,11 +829,11 @@ class SimplifiedLogFileMonitor:
             return None
 
 # ========================================
-# UPPDATERAD DISPLAY CONTROLLER med DAGLIG BACKUP
+# UPPDATERAD DISPLAY CONTROLLER med RDS-STATUS
 # ========================================
 class SimplifiedDisplayController:
     """
-    UPPDATERAD Display Controller med DAGLIG backup-strategi
+    UPPDATERAD Display Controller med RDS-mottagningsindikator
     """
     
     def __init__(self):
@@ -723,12 +845,13 @@ class SimplifiedDisplayController:
         self.display_manager = DisplayManager(log_dir=str(LOGS_DIR))
         self.startup_time = datetime.now()
         
-        logging.info("🔄 UPPDATERAD DisplayController initialiserad med DAGLIG backup")
+        logging.info("🔄 UPPDATERAD DisplayController med RDS-INDIKATOR")
         logging.info("📅 DAGLIG backup-strategi: backup/daily_YYYYMMDD/session_N_HHMMSS/")
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE")
         logging.info("🔧 FÖRENKLAD: Enkel transkriptlogik + daglig backup")
         logging.info("🕐 3B: Timestamp-cutoff implementerat")
         logging.info("🚨 VMA End Events: Stöds för korrekt display-växling")
+        logging.info("📡 NY: RDS-mottagningsindikator för döva användare")
     
     def _perform_startup_backup(self):
         """Genomför DAGLIG backup vid startup"""
@@ -754,7 +877,7 @@ class SimplifiedDisplayController:
             logging.warning("⚠️ Fortsätter utan backup - systemet kan ändå fungera")
     
     def start(self):
-        """Starta FÖRENKLAD display-kontroll med DAGLIG backup"""
+        """Starta FÖRENKLAD display-kontroll med RDS-indikator"""
         if not self.display_manager.display_available:
             logging.warning("Display inte tillgänglig - kör i simulator-läge")
         
@@ -770,12 +893,13 @@ class SimplifiedDisplayController:
         transcription_thread = threading.Thread(target=self._transcription_monitoring_loop, daemon=True)
         transcription_thread.start()
         
-        logging.info("📡 FÖRENKLAD monitoring aktiv")
+        logging.info("📡 FÖRENKLAD monitoring aktiv MED RDS-INDIKATOR")
         logging.info("✅ Daglig backup genomförd")
         logging.info("🔧 Enkel transkriptlogik: 'senaste txt-fil efter startup'")
         logging.info("🕐 3B: Bara transkript efter systemstart")
         logging.info("📅 DAGLIG backup: Organiserad per dag istället av per session")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
+        logging.info("📡 RDS-indikator: ● Aktiv | ○ Svag | ✕ Ingen")
     
     def stop(self):
         """Stoppa display-kontroll"""
@@ -784,7 +908,7 @@ class SimplifiedDisplayController:
         logging.info("🔋 FÖRENKLAD Display Controller stoppad")
     
     def _monitoring_loop(self):
-        """BEVARAR: Event monitoring loop"""
+        """BEVARAR: Event monitoring loop MED RDS-status"""
         while True:
             try:
                 # BEVARAR DIN FUNGERANDE EVENT-DETECTION
@@ -792,7 +916,7 @@ class SimplifiedDisplayController:
                 for event in events:
                     self._handle_event(event)
                 
-                # Update system status
+                # Update system status MED RDS-indikator
                 self.monitor.update_system_status()
                 
                 # ENERGIOPTIMERING: Status update var 15:e minut
@@ -803,7 +927,7 @@ class SimplifiedDisplayController:
                     if hasattr(self.display_manager, '_update_status_feedback'):
                         self.display_manager._update_status_feedback()
                     self.monitor.last_status_update = now
-                    logging.debug("🔋 15-minuters heartbeat status update")
+                    logging.debug("🔋 15-minuters heartbeat status update MED RDS-indikator")
                 
                 time.sleep(LOG_POLL_INTERVAL)
                 
@@ -887,7 +1011,7 @@ class SimplifiedDisplayController:
 # MAIN ENTRY POINT
 # ========================================
 def main():
-    """FÖRENKLAD main function med DAGLIG backup"""
+    """FÖRENKLAD main function med DAGLIG backup OCH RDS-indikator"""
     
     # Setup logging
     log_format = "%(asctime)s - DISPLAY - %(levelname)s - %(message)s"
@@ -900,7 +1024,7 @@ def main():
         ]
     )
     
-    logging.info("📅 UPPDATERAD Display Monitor - DAGLIG Backup-strategi")
+    logging.info("📡 UPPDATERAD Display Monitor - RDS-INDIKATOR för döva användare")
     logging.info("=" * 80)
     logging.info("✅ IMPLEMENTERAT:")
     logging.info("  📅 DAGLIG backup-struktur: backup/daily_YYYYMMDD/session_N_HHMMSS/")
@@ -909,10 +1033,12 @@ def main():
     logging.info("  🗂️ Organiserad backup per dag istället för per session")
     logging.info("  🧹 Bättre cleanup-möjligheter (radera hela dagar)")
     logging.info("  🔍 Enklare forensisk analys (\"Vad hände 10 juni?\")")
+    logging.info("  📡 RDS-mottagningsindikator för döva användare")
     logging.info("🔧 HYBRID: Daglig backup + workspace cleanup")
     logging.info("🕐 3B: Bara transkript efter systemstart")
     logging.info("💡 ENKELT: Senaste txt-fil = senaste transkription")
     logging.info("🚨 VMA FIX: VMA end events hanteras för korrekt display-växling")
+    logging.info("📡 RDS-STATUS: ● Aktiv | ○ Svag | ✕ Ingen mottagning")
     
     # Kontrollera att logs-katalog finns
     if not LOGS_DIR.exists():
@@ -925,25 +1051,26 @@ def main():
     BACKUP_DIR.mkdir(exist_ok=True)
     (LOGS_DIR / "screen").mkdir(exist_ok=True)
     
-    # Skapa och starta FÖRENKLAD display controller med DAGLIG backup
+    # Skapa och starta FÖRENKLAD display controller med RDS-indikator
     try:
         controller = SimplifiedDisplayController()
         controller.start()
         
-        logging.info("✅ FÖRENKLAD Display Monitor aktiv med DAGLIG backup")
+        logging.info("✅ FÖRENKLAD Display Monitor aktiv med RDS-INDIKATOR")
         logging.info("🏠 Startup-skärm visas nu")
         logging.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE → repeat")
         logging.info("📅 Daglig backup genomförd")
         logging.info("💡 Enkel transkriptlogik aktiv")
         logging.info("🚨 VMA End Events: Aktivt för korrekt display-växling")
         logging.info("🗂️ DAGLIG backup: Organiserad och lätthanterlig struktur")
+        logging.info("📡 RDS-indikator: Visar mottagningsstatus för döva användare")
         logging.info("Tryck Ctrl+C för att stoppa")
         
         # Keep running
         while True:
             time.sleep(60)
             
-            # Status var 10:e minut
+            # Status var 10:e minut MED RDS-info
             if datetime.now().minute % 10 == 0:
                 status = controller.display_manager.get_status()
                 current_state = status.get('current_state', 'unknown')
@@ -951,7 +1078,11 @@ def main():
                 processed_events = len(controller.monitor.processed_events)
                 processed_trans = len(controller.monitor.processed_transcriptions)
                 
-                logging.info(f"📊 Status: {current_state} mode, {screenshots} skärmdumpar, {processed_events} events, {processed_trans} transkriptioner")
+                # Visa RDS-status i logging
+                rds_status = controller.monitor.get_rds_status()
+                rds_info = f"RDS: {rds_status['indicator']} {rds_status['time_str']}"
+                
+                logging.info(f"📊 Status: {current_state} mode, {screenshots} skärmdumpar, {processed_events} events, {processed_trans} transkriptioner, {rds_info}")
             
     except KeyboardInterrupt:
         logging.info("Keyboard interrupt - stoppar FÖRENKLAD display monitor")
@@ -963,7 +1094,7 @@ def main():
         if 'controller' in locals():
             controller.stop()
         
-        logging.info("FÖRENKLAD Display Monitor stoppad - med DAGLIG backup och VMA End Events!")
+        logging.info("FÖRENKLAD Display Monitor stoppad - med RDS-INDIKATOR för döva användare!")
 
 if __name__ == "__main__":
     main()

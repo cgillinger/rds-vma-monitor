@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """
-FÖRENKLAD Display State Machine - Utan night mode komplexitet
-Fil: display_state_machine.py
+HOTFIX Display State Machine - Fixar start_time uppdatering för nya trafikmeddelanden
+Fil: display_state_machine.py (ERSÄTTER befintlig - HOTFIX VERSION)
 Placering: ~/rds_logger3/display_state_machine.py
 
-FÖRENKLADE STATES:
+HOTFIX PROBLEM:
+- Nya trafikmeddelanden medan redan i TRAFFIC state uppdaterade inte start_time
+- "STARTAD: HH:MM" visade alltid första trafikmeddelandes tid
+- _should_update_content() hanterade inte 'traffic_start' events
+
+HOTFIX LÖSNING:
+- _should_update_content() hanterar nu 'traffic_start' events
+- _update_current_content() uppdaterar start_time och event_start_time
+- Nya trafikmeddelanden får korrekt ny start_time även i samma state
+
+FÖRENKLADE STATES (ingen night mode):
 - STARTUP: Vid systemstart tills första event
 - TRAFFIC: Trafikmeddelande (persistent)
 - VMA: VMA-meddelande (persistent)  
-- IDLE: Väntar på events (normal drift)
+- IDLE: Väntar på events
 
 INGEN night mode - håller det enkelt för krisberedskap!
 """
@@ -40,7 +50,7 @@ class DisplayContent:
     
 class DisplayStateMachine:
     """
-    FÖRENKLAD Event-driven state machine
+    HOTFIX Event-driven state machine - Fixar start_time för nya trafikmeddelanden
     """
     
     def __init__(self):
@@ -55,9 +65,10 @@ class DisplayStateMachine:
         # State history för debugging
         self.state_history = [(DisplayState.STARTUP, datetime.now())]
         
-        logger.info("🎯 Förenklad DisplayStateMachine initialiserad")
+        logger.info("🎯 HOTFIX DisplayStateMachine initialiserad")
         logger.info(f"Initial state: {self.current_state.value}")
         logger.info("📋 States: STARTUP → TRAFFIC/VMA → IDLE → repeat")
+        logger.info("🩹 HOTFIX: Nya trafikmeddelanden uppdaterar start_time korrekt")
     
     def process_event(self, event_type: str, event_data: Dict[str, Any]) -> bool:
         """
@@ -151,7 +162,22 @@ class DisplayStateMachine:
             self.state_history = self.state_history[-20:]
     
     def _should_update_content(self, event_type: str, event_data: Dict[str, Any]) -> bool:
-        """Ska vi uppdatera innehåll utan att byta state?"""
+        """
+        HOTFIX: Ska vi uppdatera innehåll utan att byta state?
+        
+        TILLAGT: Hantera 'traffic_start' för att uppdatera start_time 
+        när nya trafikmeddelanden kommer medan redan i TRAFFIC state
+        """
+        # HOTFIX: Uppdatera för nya trafikmeddelanden i samma state
+        if event_type == 'traffic_start' and self.current_state == DisplayState.TRAFFIC:
+            logger.info("🩹 HOTFIX: Nytt trafikmeddelande medan redan i TRAFFIC - uppdaterar start_time")
+            return True
+        
+        # HOTFIX: Uppdatera för nya VMA i samma state
+        if event_type in ['vma_start', 'vma_test_start'] and self.current_state in [DisplayState.VMA, DisplayState.VMA_TEST]:
+            logger.info("🩹 HOTFIX: Nytt VMA medan redan i VMA - uppdaterar start_time")
+            return True
+        
         # Uppdatera om vi får ny transkription för samma event
         if event_type == 'transcription_complete' and self.current_state == DisplayState.TRAFFIC:
             return True
@@ -163,12 +189,40 @@ class DisplayStateMachine:
         return False
     
     def _update_current_content(self, event_type: str, event_data: Dict[str, Any]):
-        """Uppdatera innehåll i current state"""
-        if event_type == 'transcription_complete':
+        """
+        HOTFIX: Uppdatera innehåll i current state
+        
+        TILLAGT: Hantera start_time uppdatering för nya events i samma state
+        """
+        # HOTFIX: Uppdatera start_time för nya trafikmeddelanden
+        if event_type == 'traffic_start':
+            new_start_time = event_data.get('start_time', datetime.now())
+            logger.info(f"🩹 HOTFIX: Uppdaterar start_time från {self.current_content.event_start_time} till {new_start_time}")
+            
+            # Uppdatera både event_start_time och primary_data
+            self.current_content.event_start_time = new_start_time
+            self.current_content.primary_data.update(event_data)
+            self.current_content.primary_data['start_time'] = new_start_time
+        
+        # HOTFIX: Uppdatera start_time för nya VMA
+        elif event_type in ['vma_start', 'vma_test_start']:
+            new_start_time = event_data.get('start_time', datetime.now())
+            logger.info(f"🩹 HOTFIX: Uppdaterar VMA start_time från {self.current_content.event_start_time} till {new_start_time}")
+            
+            # Uppdatera både event_start_time och primary_data
+            self.current_content.event_start_time = new_start_time
+            self.current_content.primary_data.update(event_data)
+            self.current_content.primary_data['start_time'] = new_start_time
+        
+        # Ursprungliga uppdateringar
+        elif event_type == 'transcription_complete':
             self.current_content.transcription = event_data.get('transcription')
         
         # Uppdatera andra data
-        self.current_content.primary_data.update(event_data)
+        if event_type not in ['traffic_start', 'vma_start', 'vma_test_start']:
+            self.current_content.primary_data.update(event_data)
+        
+        # Alltid uppdatera last_update timestamp
         self.current_content.last_update = datetime.now()
     
     def _format_duration(self, duration) -> str:
@@ -192,6 +246,7 @@ class DisplayStateMachine:
             'content_last_update': self.current_content.last_update.isoformat(),
             'event_start_time': self.current_content.event_start_time.isoformat() if self.current_content.event_start_time else None,
             'has_transcription': self.current_content.transcription is not None,
+            'primary_data_start_time': self.current_content.primary_data.get('start_time'),
             'recent_transitions': [
                 (state.value, ts.strftime('%H:%M:%S')) 
                 for state, ts in self.state_history[-5:]
@@ -202,31 +257,35 @@ class DisplayStateMachine:
 display_state_machine = DisplayStateMachine()
 
 if __name__ == "__main__":
-    # Test av FÖRENKLAD state machine
+    # Test av HOTFIX state machine
     import time as time_module
     
-    print("🎯 Test av FÖRENKLAD DisplayStateMachine")
-    print("=" * 50)
+    print("🩹 Test av HOTFIX DisplayStateMachine - start_time fix")
+    print("=" * 60)
     
     sm = DisplayStateMachine()
     
-    # Test events - FÖRENKLADE
+    # Test HOTFIX scenario
     test_events = [
         ('traffic_start', {'start_time': datetime.now(), 'location': 'E4 Stockholm'}),
+        ('traffic_start', {'start_time': datetime.now(), 'location': 'E20 Göteborg'}),  # HOTFIX test
         ('transcription_complete', {'transcription': {'text': 'Test transkription'}}),
         ('traffic_end', {}),
-        ('vma_start', {'start_time': datetime.now(), 'content': 'VMA test'}),
-        ('vma_end', {}),
     ]
     
     for event_type, event_data in test_events:
         print(f"\n📡 Event: {event_type}")
+        if 'start_time' in event_data:
+            print(f"  Event start_time: {event_data['start_time'].strftime('%H:%M:%S')}")
+        
         needs_update = sm.process_event(event_type, event_data)
+        
         print(f"State: {sm.current_state.value}")
         print(f"Mode: {sm.get_current_display_mode()}")
         print(f"Needs update: {needs_update}")
+        print(f"Content start_time: {sm.current_content.event_start_time.strftime('%H:%M:%S') if sm.current_content.event_start_time else 'None'}")
         
         time_module.sleep(1)
     
     print(f"\n📊 Debug info: {sm.get_debug_info()}")
-    print("\n✅ FÖRENKLAD State Machine - Inga komplicerade night mode edge cases!")
+    print("\n✅ HOTFIX State Machine - start_time uppdateras nu korrekt för nya trafikmeddelanden!")

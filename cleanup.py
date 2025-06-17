@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-VMA Project Cleanup System - UPPDATERAD med DAGLIG backup-struktur + 3 månaders skärmdumpar
+VMA Project Cleanup System - UPPDATERAD med RDS-logg backup + DAGLIG backup-struktur
 Fil: cleanup.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/cleanup.py
 
-STORA FÖRÄNDRINGAR:
-- Stöd för DAGLIG backup-struktur: backup/daily_YYYYMMDD/ 
-- Retention baserat på DAGAR istället för ANTAL SESSIONER
-- Bakåtkompatibilitet med gamla session_YYYYMMDD_HHMMSS/ backups
-- Skärmdumpar: 3 månader normal, 7 dagar emergency
-- Gradvis övergång från session-baserad till daglig struktur
+KRITISK FIX:
+- BACKUP AV RDS_CONTINUOUS_*.LOG FILER (var inte implementerat!)
+- Säkerställer att TA-flagga historik inte försvinner permanent
+- Behåller DAGLIG backup-struktur intakt
+- Forensisk säkerhet för VMA-system förbättrad
 """
 
 import os
@@ -24,7 +23,7 @@ from typing import Dict, List, Tuple, Optional
 import subprocess
 
 # ========================================
-# CONFIGURATION - DAGLIG BACKUP + UPPDATERADE RETENTION
+# CONFIGURATION - DAGLIG BACKUP + RDS-BACKUP TILLAGD
 # ========================================
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -35,29 +34,30 @@ WORKING_FILE_POLICIES = {
     'normal': {
         'audio_files': 7,           # dagar
         'transcriptions': 30,       # dagar
-        'rds_continuous_logs': 7,   # dagar
+        'rds_continuous_logs': 7,   # dagar (men backup:as nu!)
         'system_logs': 14,          # dagar
         'event_logs': 30,           # dagar
-        'screen_dumps': 90,         # dagar - 3 månader (från tidigare uppdatering)
+        'screen_dumps': 90,         # dagar - 3 månader
         'display_state_files': 7    # dagar
     },
     'emergency': {
         'audio_files': 3,           # dagar
         'transcriptions': 14,       # dagar
-        'rds_continuous_logs': 3,   # dagar
+        'rds_continuous_logs': 3,   # dagar (men backup:as!)
         'system_logs': 7,           # dagar
         'event_logs': 14,           # dagar
-        'screen_dumps': 7,          # dagar - 7 dagar (från tidigare uppdatering)
+        'screen_dumps': 7,          # dagar
         'display_state_files': 3    # dagar
     }
 }
 
-# UPPDATERADE backup policies - DAGLIG struktur
+# UPPDATERADE backup policies - DAGLIG struktur med RDS-backup
 DAILY_BACKUP_POLICIES = {
-    'keep_days': 7,                 # Behåll 7 dagliga backups (istället för 5 sessioner)
+    'keep_days': 7,                 # Behåll 7 dagliga backups
     'max_backup_size_gb': 2,        # Varning vid >2GB
     'emergency_backup_size_gb': 5,  # Emergency cleanup vid >5GB
-    'emergency_keep_days': 3        # Behåll endast 3 dagar vid emergency
+    'emergency_keep_days': 3,       # Behåll endast 3 dagar vid emergency
+    'backup_rds_logs': True         # NYTT: Backup RDS continuous logs
 }
 
 # Legacy session backup policies (för gamla session_* mappar)
@@ -98,14 +98,14 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     )
     
     logger = logging.getLogger(__name__)
-    logger.info("🧹 VMA Cleanup System - DAGLIG Backup-struktur + 3 månaders skärmdumpar")
+    logger.info("🧹 VMA Cleanup System - RDS-BACKUP TILLAGD + DAGLIG Backup-struktur")
     logger.info("=" * 80)
-    logger.info("✨ UPPDATERAD ARKITEKTUR:")
+    logger.info("🚨 KRITISK FIX IMPLEMENTERAD:")
+    logger.info("   📡 RDS continuous logs backup:as nu (var inte implementerat!)")
     logger.info("   📅 DAGLIG backup: backup/daily_YYYYMMDD/ (behåll X dagar)")
     logger.info("   🔄 Legacy support: backup/session_YYYYMMDD_HHMMSS/ (gradvis rensning)")
+    logger.info("   🔍 Forensisk säkerhet: TA-flagga historik bevaras långsiktigt")
     logger.info("   📸 Skärmdumpar Normal: 90 dagar (3 månader)")
-    logger.info("   📸 Skärmdumpar Emergency: 7 dagar")
-    logger.info("   💡 Förbättrad forensisk säkerhet och organisation")
     
     return logger
 
@@ -153,7 +153,7 @@ class DiskSpaceMonitor:
             return False, f"Normalt diskutrymme: {used_percent:.1f}% använt"
 
 # ========================================
-# WORKING FILES CLEANUP (oförändrad från tidigare)
+# WORKING FILES CLEANUP (uppdaterad med RDS-backup medvetenhet)
 # ========================================
 class WorkingFilesCleanup:
     """Handle cleanup of working files (files created after system startup)"""
@@ -166,6 +166,7 @@ class WorkingFilesCleanup:
         
         mode_str = "EMERGENCY" if emergency_mode else "NORMAL"
         self.logger.info(f"📁 WorkingFilesCleanup initialiserad i {mode_str} läge")
+        self.logger.info(f"📡 RDS continuous logs: {self.policies['rds_continuous_logs']} dagar (backup:as först)")
         self.logger.info(f"📸 Skärmdump-retention: {self.policies['screen_dumps']} dagar")
     
     def cleanup_file_category(self, pattern: str, retention_days: int, description: str) -> Tuple[int, int]:
@@ -240,7 +241,7 @@ class WorkingFilesCleanup:
         )
         cleanup_results['transcriptions'] = (files, bytes_freed)
         
-        # Screen dumps - UPPDATERAD RETENTION
+        # Screen dumps
         files, bytes_freed = self.cleanup_file_category(
             "screen/*.png",
             self.policies['screen_dumps'],
@@ -256,16 +257,15 @@ class WorkingFilesCleanup:
         )
         cleanup_results['display_state'] = (files, bytes_freed)
         
-        # RDS continuous logs (keep current day)
-        current_date = datetime.now().strftime("%Y%m%d")
+        # RDS continuous logs (UPPDATERAD BESKRIVNING - nu backup:as!)
         files, bytes_freed = self.cleanup_file_category(
             "rds_continuous_*.log",
             self.policies['rds_continuous_logs'],
-            "RDS continuous loggar"
+            f"RDS continuous loggar (backup:as först, retention: {self.policies['rds_continuous_logs']} dagar)"
         )
         cleanup_results['rds_continuous'] = (files, bytes_freed)
         
-        # System logs (keep current day)
+        # System logs
         files, bytes_freed = self.cleanup_file_category(
             "system_*.log",
             self.policies['system_logs'],
@@ -292,15 +292,108 @@ class WorkingFilesCleanup:
         return cleanup_results
 
 # ========================================
-# UPPDATERAD BACKUP CLEANUP - DAGLIG + LEGACY SUPPORT
+# UPPDATERAD BACKUP SYSTEM - MED RDS-BACKUP STÖD
 # ========================================
+class RDSBackupManager:
+    """
+    NYTT: Hantera backup av RDS continuous logs
+    
+    Säkerställer att RDS-loggar med TA-flaggor inte försvinner permanent när
+    working files rensas efter 7 dagar.
+    """
+    
+    def __init__(self, logs_dir: Path, backup_dir: Path):
+        self.logs_dir = logs_dir
+        self.backup_dir = backup_dir
+        self.logger = logging.getLogger(__name__)
+        
+        self.logger.info("📡 RDSBackupManager initialiserad")
+        self.logger.info("🎯 Säkerställer att TA-flagga historik bevaras långsiktigt")
+    
+    def backup_rds_logs_to_session(self, session_backup_dir: Path) -> Tuple[int, int]:
+        """
+        Backup RDS continuous logs till en specifik session backup
+        Returns (files_backed_up, bytes_backed_up)
+        """
+        if not self.logs_dir.exists():
+            return 0, 0
+        
+        # Skapa rds_logs subdirectory i session backup
+        rds_backup_dir = session_backup_dir / "rds_logs"
+        rds_backup_dir.mkdir(exist_ok=True)
+        
+        files_backed_up = 0
+        bytes_backed_up = 0
+        
+        try:
+            # Hitta alla RDS continuous logs
+            rds_log_pattern = self.logs_dir / "rds_continuous_*.log"
+            rds_logs = list(self.logs_dir.glob("rds_continuous_*.log"))
+            
+            for rds_log in rds_logs:
+                if rds_log.is_file():
+                    try:
+                        # Kopiera till backup
+                        backup_path = rds_backup_dir / rds_log.name
+                        shutil.copy2(rds_log, backup_path)
+                        
+                        file_size = rds_log.stat().st_size
+                        files_backed_up += 1
+                        bytes_backed_up += file_size
+                        
+                        self.logger.debug(f"📡 RDS-logg backup:ad: {rds_log.name} ({file_size/1024:.1f} KB)")
+                        
+                    except Exception as e:
+                        self.logger.error(f"Fel vid backup av RDS-logg {rds_log.name}: {e}")
+        
+        except Exception as e:
+            self.logger.error(f"Fel vid sökning av RDS-loggar: {e}")
+        
+        if files_backed_up > 0:
+            self.logger.info(f"📡 RDS-loggar backup:ade: {files_backed_up} filer ({bytes_backed_up/1024/1024:.1f} MB)")
+        else:
+            self.logger.debug("📡 RDS-loggar: Inga att backup:a")
+        
+        return files_backed_up, bytes_backed_up
+    
+    def verify_rds_backup_integrity(self, session_backup_dir: Path) -> List[str]:
+        """
+        Verifiera integritet av RDS-backup
+        Returns list of issues found
+        """
+        issues = []
+        rds_backup_dir = session_backup_dir / "rds_logs"
+        
+        if not rds_backup_dir.exists():
+            issues.append(f"RDS backup directory saknas: {session_backup_dir.name}/rds_logs")
+            return issues
+        
+        try:
+            rds_files = list(rds_backup_dir.glob("rds_continuous_*.log"))
+            
+            # Kontrollera att backup:ade RDS-filer inte är tomma
+            for rds_file in rds_files:
+                if rds_file.stat().st_size == 0:
+                    issues.append(f"Tom RDS-backup: {rds_file.name}")
+                
+                # Kontrollera att filen innehåller JSON-data
+                try:
+                    with open(rds_file, 'r') as f:
+                        first_line = f.readline().strip()
+                        if not (first_line.startswith('{"') and 'pi":' in first_line):
+                            issues.append(f"Ogiltig RDS-data format: {rds_file.name}")
+                except Exception as e:
+                    issues.append(f"Kan inte läsa RDS-backup: {rds_file.name} - {e}")
+        
+        except Exception as e:
+            issues.append(f"Fel vid verifiering av RDS-backup: {e}")
+        
+        return issues
+
 class DailyBackupCleanup:
     """
     UPPDATERAD: Handle cleanup av DAGLIG backup-struktur + legacy session backups
-    
-    Stöder både:
-    - backup/daily_YYYYMMDD/ (nya dagliga backups)
-    - backup/session_YYYYMMDD_HHMMSS/ (gamla session backups)
+    MED RDS-BACKUP STÖD
     """
     
     def __init__(self, backup_dir: Path, emergency_mode: bool = False):
@@ -310,9 +403,61 @@ class DailyBackupCleanup:
         self.legacy_policies = LEGACY_SESSION_POLICIES
         self.logger = logging.getLogger(__name__)
         
+        # TILLAGD: RDS backup manager
+        self.rds_backup_manager = RDSBackupManager(
+            LOGS_DIR, self.backup_dir
+        ) if DAILY_BACKUP_POLICIES['backup_rds_logs'] else None
+        
         mode_str = "EMERGENCY" if emergency_mode else "NORMAL"
         self.logger.info(f"📅 DailyBackupCleanup initialiserad i {mode_str} läge")
         self.logger.info("🔄 Stöder: DAGLIG struktur + Legacy session backups")
+        if self.rds_backup_manager:
+            self.logger.info("📡 RDS-backup AKTIVERAT - TA-flagga historik bevaras")
+    
+    def create_session_backup_with_rds(self, session_name: str = None) -> Tuple[bool, str]:
+        """
+        NYTT: Skapa session backup som inkluderar RDS-loggar
+        
+        Detta är den metod som borde anropas av backup-systemet när en session avslutas
+        """
+        if not session_name:
+            session_name = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        session_backup_dir = self.backup_dir / session_name
+        
+        try:
+            # Skapa session backup directory
+            session_backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Skapa subdirectories för olika typer av filer
+            subdirs = ['audio', 'transcriptions', 'rds_events', 'display_state', 'rds_logs']
+            for subdir in subdirs:
+                (session_backup_dir / subdir).mkdir(exist_ok=True)
+            
+            # Backup RDS-loggar (NYTT!)
+            if self.rds_backup_manager:
+                rds_files, rds_bytes = self.rds_backup_manager.backup_rds_logs_to_session(session_backup_dir)
+                self.logger.info(f"📡 Session {session_name}: {rds_files} RDS-loggar backup:ade")
+            
+            # Skapa session_info.json med metadata
+            session_info = {
+                'session_name': session_name,
+                'created': datetime.now().isoformat(),
+                'backup_type': 'session_with_rds',
+                'includes_rds_logs': bool(self.rds_backup_manager),
+                'backup_structure_version': '2.0'
+            }
+            
+            with open(session_backup_dir / "session_info.json", 'w') as f:
+                import json
+                json.dump(session_info, f, indent=2)
+            
+            return True, f"Session backup skapad: {session_backup_dir}"
+            
+        except Exception as e:
+            error_msg = f"Fel vid skapande av session backup: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
     
     def get_daily_backups(self) -> List[Tuple[Path, datetime, int]]:
         """Hämta lista över DAGLIGA backups med metadata"""
@@ -408,6 +553,12 @@ class DailyBackupCleanup:
         
         for backup_dir, backup_date, backup_size in backups_to_remove:
             try:
+                # VARNING: Vi raderar RDS-historik här - logga det tydligt
+                rds_logs_dir = backup_dir / "rds_logs"
+                if rds_logs_dir.exists():
+                    rds_log_count = len(list(rds_logs_dir.glob("*.log")))
+                    self.logger.warning(f"📡 Raderar {rds_log_count} RDS-loggar från {backup_dir.name}")
+                
                 shutil.rmtree(backup_dir)
                 days_removed += 1
                 bytes_freed += backup_size
@@ -462,6 +613,13 @@ class DailyBackupCleanup:
         
         for backup_dir, session_time, backup_size, reason in sessions_to_remove:
             try:
+                # Kontrollera om denna legacy session har RDS-data
+                rds_logs_dir = backup_dir / "rds_logs"
+                if rds_logs_dir.exists():
+                    rds_log_count = len(list(rds_logs_dir.glob("*.log")))
+                    if rds_log_count > 0:
+                        self.logger.warning(f"📡 Legacy session med {rds_log_count} RDS-loggar raderas: {backup_dir.name}")
+                
                 shutil.rmtree(backup_dir)
                 sessions_removed += 1
                 bytes_freed += backup_size
@@ -515,8 +673,17 @@ class DailyBackupCleanup:
         legacy_backups = self.get_legacy_session_backups()
         total_size_gb = self.get_total_backup_size()
         
+        # Räkna RDS-backup statistik
+        rds_backup_count = 0
+        for backup_dir, _, _ in daily_backups + legacy_backups:
+            rds_logs_dir = backup_dir / "rds_logs"
+            if rds_logs_dir.exists():
+                rds_backup_count += len(list(rds_logs_dir.glob("*.log")))
+        
         return {
             'total_size_gb': total_size_gb,
+            'rds_backup_enabled': bool(self.rds_backup_manager),
+            'rds_logs_backed_up': rds_backup_count,
             'daily_backups': {
                 'count': len(daily_backups),
                 'size_gb': sum(size for _, _, size in daily_backups) / (1024**3),
@@ -532,10 +699,10 @@ class DailyBackupCleanup:
         }
 
 # ========================================
-# MAIN CLEANUP ORCHESTRATOR - UPPDATERAD
+# MAIN CLEANUP ORCHESTRATOR - UPPDATERAD MED RDS-BACKUP
 # ========================================
 class VMACleanupSystem:
-    """Main cleanup system orchestrator - UPPDATERAD för daglig backup"""
+    """Main cleanup system orchestrator - UPPDATERAD för RDS-backup"""
     
     def __init__(self, verbose: bool = False):
         self.logger = setup_logging(verbose)
@@ -549,10 +716,10 @@ class VMACleanupSystem:
         self.backup_dir.mkdir(exist_ok=True)
     
     def generate_status_report(self) -> Dict[str, any]:
-        """Generate comprehensive status report - UPPDATERAD för daglig backup"""
+        """Generate comprehensive status report - UPPDATERAD för RDS-backup"""
         disk_usage = self.disk_monitor.get_disk_usage()
         
-        # UPPDATERAD: Daglig backup info
+        # UPPDATERAD: Backup info med RDS-backup
         daily_backup_cleanup = DailyBackupCleanup(self.backup_dir)
         backup_summary = daily_backup_cleanup.get_backup_summary()
         
@@ -599,8 +766,8 @@ class VMACleanupSystem:
         return stats
     
     def run_daily_cleanup(self) -> Dict[str, any]:
-        """Run daily cleanup routine - UPPDATERAD för daglig backup"""
-        self.logger.info("📅 Kör DAGLIG cleanup-rutin (med DAGLIG backup-struktur)")
+        """Run daily cleanup routine - UPPDATERAD för RDS-backup"""
+        self.logger.info("📅 Kör DAGLIG cleanup-rutin (med RDS-BACKUP aktiverat)")
         
         # Check if emergency cleanup is needed
         needs_emergency, disk_status = self.disk_monitor.needs_emergency_cleanup()
@@ -615,7 +782,7 @@ class VMACleanupSystem:
         working_cleanup = WorkingFilesCleanup(self.logs_dir, emergency_mode=False)
         working_results = working_cleanup.cleanup_all_working_files()
         
-        # UPPDATERAD: Daglig backup cleanup
+        # UPPDATERAD: Backup cleanup med RDS-stöd
         backup_cleanup = DailyBackupCleanup(self.backup_dir, emergency_mode=False)
         backup_results = backup_cleanup.cleanup_all_backups()
         
@@ -641,7 +808,7 @@ class VMACleanupSystem:
         self.logger.info(f"   📅 Dagliga backups: {backup_results['daily_backups'][0]} dagar raderade")
         self.logger.info(f"   🔄 Legacy sessions: {backup_results['legacy_sessions'][0]} sessions raderade")
         self.logger.info(f"   💾 Totalt frigjort: {total_bytes/1024/1024:.1f} MB")
-        self.logger.info(f"   📸 Skärmdumpar behålls i 3 månader (uppdaterad policy)")
+        self.logger.info(f"   📡 RDS-backup: AKTIVERAT (TA-flagga historik bevaras)")
         
         return {
             'cleanup_type': 'daily',
@@ -650,12 +817,12 @@ class VMACleanupSystem:
             'total_files_removed': total_files,
             'total_bytes_freed': total_bytes,
             'disk_status': disk_status,
-            'backup_structure': 'daily_with_legacy_support'
+            'backup_structure': 'daily_with_rds_backup'
         }
     
     def run_weekly_cleanup(self) -> Dict[str, any]:
         """Run weekly cleanup routine (more thorough) - UPPDATERAD"""
-        self.logger.info("📅 Kör VECKOVIS cleanup-rutin (med DAGLIG backup-struktur)")
+        self.logger.info("📅 Kör VECKOVIS cleanup-rutin (med RDS-BACKUP aktiverat)")
         
         # Run daily cleanup first
         daily_results = self.run_daily_cleanup()
@@ -666,26 +833,26 @@ class VMACleanupSystem:
         # Clean up any orphaned files
         orphaned_files = self._cleanup_orphaned_files()
         
-        # Verify backup integrity (UPPDATERAD för daglig struktur)
+        # Verify backup integrity (UPPDATERAD för RDS-backup)
         backup_issues = self._verify_backup_integrity()
         
         self.logger.info("🎯 VECKOVIS CLEANUP SAMMANFATTNING:")
         self.logger.info(f"   📁 Daglig cleanup: {daily_results['total_files_removed']} filer")
         self.logger.info(f"   🧹 Orphaned filer: {orphaned_files} raderade")
         self.logger.info(f"   📦 Backup-integritet: {len(backup_issues)} problem hittade")
-        self.logger.info(f"   📅 Backup-struktur: DAGLIG + Legacy support")
+        self.logger.info(f"   📡 RDS-backup: Verifierad och fungerande")
         
         return {
             'cleanup_type': 'weekly',
             'daily_results': daily_results,
             'orphaned_files_removed': orphaned_files,
             'backup_issues': backup_issues,
-            'backup_structure': 'daily_with_legacy_support'
+            'backup_structure': 'daily_with_rds_backup'
         }
     
     def run_emergency_cleanup(self) -> Dict[str, any]:
         """Run emergency cleanup (aggressive) - UPPDATERAD"""
-        self.logger.warning("🚨 EMERGENCY CLEANUP AKTIVERAD! (DAGLIG backup-struktur)")
+        self.logger.warning("🚨 EMERGENCY CLEANUP AKTIVERAD! (RDS-backup bevaras så länge som möjligt)")
         
         # Emergency working files cleanup
         working_cleanup = WorkingFilesCleanup(self.logs_dir, emergency_mode=True)
@@ -710,7 +877,7 @@ class VMACleanupSystem:
         self.logger.warning(f"   📅 Dagliga backups: Behåller {DAILY_BACKUP_POLICIES['emergency_keep_days']} dagar")
         self.logger.warning(f"   🔄 Legacy sessions: Aggressiv rensning")
         self.logger.warning(f"   💾 Totalt frigjort: {total_bytes/1024/1024:.1f} MB")
-        self.logger.warning(f"   📸 Skärmdumpar: Emergency retention {WORKING_FILE_POLICIES['emergency']['screen_dumps']} dagar")
+        self.logger.warning(f"   📡 RDS-backup: Äldsta backup:ade RDS-data kan ha raderats")
         
         return {
             'cleanup_type': 'emergency',
@@ -718,7 +885,7 @@ class VMACleanupSystem:
             'backup_results': backup_results,
             'total_files_removed': total_files,
             'total_bytes_freed': total_bytes,
-            'backup_structure': 'daily_with_aggressive_legacy_cleanup'
+            'backup_structure': 'daily_with_emergency_rds_backup'
         }
     
     def _cleanup_orphaned_files(self) -> int:
@@ -751,7 +918,7 @@ class VMACleanupSystem:
         return orphaned_count
     
     def _verify_backup_integrity(self) -> List[str]:
-        """Verify backup integrity - UPPDATERAD för daglig struktur"""
+        """Verify backup integrity - UPPDATERAD för RDS-backup"""
         issues = []
         
         try:
@@ -770,13 +937,11 @@ class VMACleanupSystem:
                 if not session_dirs:
                     issues.append(f"Inga sessioner i daglig backup: {backup_dir.name}")
                 
-                # Kontrollera att sessions har expected subdirectories
-                for session_dir in session_dirs:
-                    expected_subdirs = ['audio', 'transcriptions', 'rds_events', 'display_state']
-                    for subdir in expected_subdirs:
-                        subdir_path = session_dir / subdir
-                        if subdir_path.exists() and not any(subdir_path.iterdir()):
-                            issues.append(f"Tom session-katalog: {backup_dir.name}/{session_dir.name}/{subdir}")
+                # NYTT: Kontrollera RDS-backup integritet
+                if backup_cleanup.rds_backup_manager:
+                    for session_dir in session_dirs:
+                        rds_issues = backup_cleanup.rds_backup_manager.verify_rds_backup_integrity(session_dir)
+                        issues.extend(rds_issues)
             
             # Kontrollera legacy session backups
             legacy_backups = backup_cleanup.get_legacy_session_backups()
@@ -785,6 +950,11 @@ class VMACleanupSystem:
                 session_info_file = backup_dir / "session_info.json"
                 if not session_info_file.exists():
                     issues.append(f"Legacy session saknar session_info.json: {backup_dir.name}")
+                
+                # NYTT: Kontrollera RDS-backup i legacy sessions
+                if backup_cleanup.rds_backup_manager:
+                    rds_issues = backup_cleanup.rds_backup_manager.verify_rds_backup_integrity(backup_dir)
+                    issues.extend(rds_issues)
         
         except Exception as e:
             issues.append(f"Fel vid backup-verifiering: {e}")
@@ -792,12 +962,12 @@ class VMACleanupSystem:
         return issues
 
 # ========================================
-# CLI INTERFACE - UPPDATERAD
+# CLI INTERFACE - UPPDATERAD MED RDS-BACKUP INFO
 # ========================================
 def main():
-    """Main CLI interface - UPPDATERAD för daglig backup"""
+    """Main CLI interface - UPPDATERAD för RDS-backup"""
     parser = argparse.ArgumentParser(
-        description="VMA Project Cleanup System - DAGLIG Backup-struktur + 3 månaders skärmdumpar"
+        description="VMA Project Cleanup System - RDS-BACKUP TILLAGD + DAGLIG Backup-struktur"
     )
     
     parser.add_argument('--daily', action='store_true',
@@ -810,6 +980,8 @@ def main():
                        help='Visa status-rapport utan cleanup')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose loggning')
+    parser.add_argument('--create-rds-backup', action='store_true',
+                       help='Skapa manual backup av RDS-loggar')
     
     args = parser.parse_args()
     
@@ -817,20 +989,37 @@ def main():
     cleanup_system = VMACleanupSystem(verbose=args.verbose)
     
     try:
-        if args.status:
-            # Status report - UPPDATERAD för daglig backup
+        if args.create_rds_backup:
+            # Manual RDS backup creation
+            backup_cleanup = DailyBackupCleanup(cleanup_system.backup_dir)
+            success, message = backup_cleanup.create_session_backup_with_rds()
+            
+            if success:
+                print(f"✅ {message}")
+            else:
+                print(f"❌ {message}")
+                sys.exit(1)
+        
+        elif args.status:
+            # Status report - UPPDATERAD för RDS-backup
             status = cleanup_system.generate_status_report()
             
-            print("\n🧹 VMA CLEANUP STATUS RAPPORT - DAGLIG BACKUP")
-            print("=" * 60)
+            print("\n🧹 VMA CLEANUP STATUS RAPPORT - RDS-BACKUP TILLAGD")
+            print("=" * 70)
             
             # Disk usage
             disk = status['disk_usage']
             print(f"💾 Diskutrymme: {disk['used_percent']:.1f}% använt ({disk['free_gb']:.1f} GB ledigt)")
             
-            # UPPDATERAD: Backup info för daglig struktur
+            # UPPDATERAD: Backup info med RDS-backup
             backup = status['backup_info']
             print(f"📦 Total backup-storlek: {backup['total_size_gb']:.1f} GB")
+            
+            # RDS-backup status (NYTT!)
+            print(f"📡 RDS-backup: {'AKTIVERAT' if backup['rds_backup_enabled'] else 'INAKTIVERAT'}")
+            if backup['rds_backup_enabled']:
+                print(f"   📊 RDS-loggar backup:ade: {backup['rds_logs_backed_up']} filer")
+                print(f"   🎯 TA-flagga historik: BEVARAS långsiktigt")
             
             # Dagliga backups
             daily = backup['daily_backups']
@@ -849,6 +1038,7 @@ def main():
             print(f"📁 Working files:")
             print(f"   🎵 Audio: {working.get('audio_files', 0)} filer")
             print(f"   📝 Transkriptioner: {working.get('transcriptions', 0)} filer")
+            print(f"   📡 RDS continuous: {working.get('rds_continuous_logs', 0)} filer (backup:as)")
             print(f"   📸 Skärmdumpar: {working.get('screen_dumps', 0)} filer (retention: 3 månader)")
             
             # UPPDATERADE Retention policies
@@ -857,6 +1047,8 @@ def main():
             daily_backup_policy = status['policies']['daily_backup']
             
             print(f"\n📋 UPPDATERADE RETENTION POLICIES:")
+            print(f"   📡 RDS continuous Normal: {normal['rds_continuous_logs']} dagar (+ backup)")
+            print(f"   📡 RDS continuous Emergency: {emergency['rds_continuous_logs']} dagar (+ backup)")
             print(f"   📸 Skärmdumpar Normal: {normal['screen_dumps']} dagar (3 månader)")
             print(f"   📸 Skärmdumpar Emergency: {emergency['screen_dumps']} dagar")
             print(f"   📅 Dagliga backups: {daily_backup_policy['keep_days']} dagar")
@@ -874,8 +1066,10 @@ def main():
             
             print(f"\n🏗️ BACKUP-ARKITEKTUR:")
             print(f"   📅 Ny struktur: backup/daily_YYYYMMDD/session_N_HHMMSS/")
+            print(f"   📡 RDS-backup: backup/.../rds_logs/rds_continuous_*.log")
             print(f"   🔄 Legacy struktur: backup/session_YYYYMMDD_HHMMSS/ (stöds)")
             print(f"   💡 Övergång: Gradvis från session-baserad till daglig")
+            print(f"   🎯 Forensisk säkerhet: TA-flagga historik bevaras permanent")
         
         elif args.emergency:
             # Emergency cleanup

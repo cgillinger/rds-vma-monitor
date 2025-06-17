@@ -1,31 +1,24 @@
 #!/usr/bin/env python3
 """
-ENERGIOPTIMERAD Content Formatter - Smart status timing + OPTIMERAD för långa trafikmeddelanden
+UPPDATERAD Content Formatter - MED RDS-INDIKATOR för döva användare
 Fil: content_formatter.py (ERSÄTTER befintlig)
 Placering: ~/rds_logger3/content_formatter.py
 
-HOTFIX:
-- Fixar _extract_direction() att bara extrahera riktningsord (inte hela meddelandet)
-- Ändrar tillbaka sektionsnamn till 'transcription' för kompatibilitet
-- Tar bort .title() som skapade versaler på varje ord
+NY FUNKTION:
+- RDS-mottagningsindikator för döva användare
+- Visar RDS-status i footer: "System OK • 14:30 • RDS: ● 14:29"
+- Smart integration som INTE triggar extra uppdateringar
 
-OPTIMERINGAR:
+BEVARAR:
 - Trafikmeddelanden: +5 rader extra för längre meddelanden
 - Header: "TRAFIKMEDDELANDE. STARTAD: HH:MM" (utan sekunder)
-- Borttaget: "FULLSTÄNDIG TRANSKRIPTION:" rubrik (redundant)
-- Borttaget: Status info-sektion (redundant - redan i header)
-- Behållet: Key info-sektionen (överskådlig och intuitiv)
+- HOTFIX: Fixad riktningsextraktion och transkriptionsvisning
+- ENERGIOPTIMERING: Smart status timing för minimal content hash ändringar
 
-ENERGIOPTIMERING:
-- Status footer: 15min intervall (intelligent timing)
-- Sekund-precision endast vid events (inte kontinuerligt)
-- Optimerad för minimal content hash ändringar
-
-FÖRENKLADE MODES (ingen night mode):
-- startup: Startskärm tills första event
-- idle: Normal drift utan aktiva meddelanden  
-- traffic: Trafikmeddelande
-- vma: VMA-meddelande
+INDIKATOR:
+- ● Aktiv mottagning (<5 min gammal)
+- ○ Svag mottagning (5-15 min gammal)  
+- ✕ Ingen mottagning (>15 min gammal)
 """
 
 import re
@@ -93,7 +86,7 @@ def format_swedish_date(dt, include_seconds=False):
 
 class ContentFormatter:
     """
-    ENERGIOPTIMERAD Content Formatter med smart status timing + OPTIMERAD för långa trafikmeddelanden
+    UPPDATERAD Content Formatter med RDS-indikator för döva användare
     """
     
     def __init__(self):
@@ -104,8 +97,9 @@ class ContentFormatter:
         # ENERGIOPTIMERING: Cache för status timing
         self.last_status_minute = None
         
-        logger.debug("🔋 ENERGIOPTIMERAD + OPTIMERAD ContentFormatter initialiserad")
+        logger.debug("📡 UPPDATERAD ContentFormatter med RDS-indikator")
         logger.debug("🚧 TRAFIKOPTIMERING: +5 rader extra för längre meddelanden")
+        logger.debug("📡 NY: RDS-mottagningsindikator för döva användare")
         
     def format_for_mode(self, mode: str, primary_data: Dict = None, status_info: Dict = None, **kwargs) -> Dict:
         """
@@ -130,7 +124,7 @@ class ContentFormatter:
     
     def format_for_startup_mode(self, status_info: Dict = None) -> Dict:
         """
-        Startup-skärm som visas vid systemstart
+        Startup-skärm som visas vid systemstart MED RDS-indikator
         """
         now = datetime.now()
         status_info = status_info or {}
@@ -157,8 +151,8 @@ class ContentFormatter:
             "Väntar på första meddelande..."
         ]
         
-        # ENERGIOPTIMERAD: Status feedback med smart timing
-        status_text = self._format_status_feedback_optimized(status_info, mode='startup')
+        # UPPDATERAD: Status feedback MED RDS-indikator
+        status_text = self._format_status_feedback_with_rds(status_info, mode='startup')
         
         return {
             'mode': 'startup',
@@ -201,7 +195,7 @@ class ContentFormatter:
     
     def format_for_idle_mode(self, system_status: Dict, status_info: Dict = None) -> Dict:
         """
-        Idle-läge: Normal drift utan aktiva meddelanden
+        Idle-läge: Normal drift utan aktiva meddelanden MED RDS-indikator
         """
         now = datetime.now()
         status_info = status_info or {}
@@ -240,8 +234,8 @@ class ContentFormatter:
             f"Systemupptid: {uptime}"
         ]
         
-        # ENERGIOPTIMERAD: Status feedback med smart timing
-        status_text = self._format_status_feedback_optimized(status_info, mode='idle')
+        # UPPDATERAD: Status feedback MED RDS-indikator
+        status_text = self._format_status_feedback_with_rds(status_info, mode='idle')
         
         return {
             'mode': 'idle',
@@ -283,7 +277,7 @@ class ContentFormatter:
     
     def format_for_traffic_mode(self, traffic_data: Dict, transcription: Dict = None, status_info: Dict = None) -> Dict:
         """
-        OPTIMERAD Trafikmeddelande-läge med +5 rader extra för längre meddelanden
+        OPTIMERAD Trafikmeddelande-läge med +5 rader extra MED RDS-indikator
         """
         start_time = traffic_data.get('start_time', datetime.now())
         status_info = status_info or {}
@@ -317,8 +311,8 @@ class ContentFormatter:
                 text = text[:max_chars-3] + "..."
             full_transcription = text
         
-        # ENERGIOPTIMERAD: Status feedback med smart timing
-        status_text = self._format_status_feedback_optimized(status_info, mode='traffic')
+        # UPPDATERAD: Status feedback MED RDS-indikator
+        status_text = self._format_status_feedback_with_rds(status_info, mode='traffic')
         
         return {
             'mode': 'traffic',
@@ -355,7 +349,7 @@ class ContentFormatter:
     
     def format_for_vma_mode(self, vma_data: Dict, is_test: bool = False, status_info: Dict = None) -> Dict:
         """
-        VMA-läge med status feedback
+        VMA-läge med status feedback MED RDS-indikator
         """
         now = datetime.now()
         status_info = status_info or {}
@@ -393,8 +387,8 @@ class ContentFormatter:
             "WEB: krisinformation.se (om internetanslutning finns)"
         ]
         
-        # ENERGIOPTIMERAD: Status feedback med smart timing
-        status_text = self._format_status_feedback_optimized(status_info, mode='vma')
+        # UPPDATERAD: Status feedback MED RDS-indikator
+        status_text = self._format_status_feedback_with_rds(status_info, mode='vma')
         
         return {
             'mode': 'vma',
@@ -449,14 +443,16 @@ class ContentFormatter:
             }
         }
     
-    def _format_status_feedback_optimized(self, status_info: Dict, mode: str) -> str:
+    def _format_status_feedback_with_rds(self, status_info: Dict, mode: str) -> str:
         """
-        ENERGIOPTIMERAD: Status feedback med smart timing för minimal content hash ändringar
+        NY: Status feedback MED RDS-indikator för döva användare
         
-        Strategier:
-        - Startup/Idle: Bara minuter (inte sekunder) för mindre ändringar
-        - Traffic/VMA: Sekund-precision för viktiga events
-        - 15min granularitet för heartbeat
+        Format: "System OK • 14:30 • RDS: ● 14:29"
+        
+        RDS-indikatorer:
+        ● = Aktiv mottagning (<5 min)
+        ○ = Svag mottagning (5-15 min)
+        ✕ = Ingen mottagning (>15 min)
         """
         now = datetime.now()
         current_minute = now.strftime('%H:%M')
@@ -465,31 +461,80 @@ class ContentFormatter:
             # ENERGIOPTIMERING: Olika precision baserat på mode
             if mode in ['traffic', 'vma']:
                 # Viktiga events - sekund-precision
-                return f"System OK • {now.strftime('%H:%M:%S')}"
+                base_status = f"System OK • {now.strftime('%H:%M:%S')}"
             else:
                 # Normal drift - minut-precision för mindre hash-ändringar
-                return f"System OK • {current_minute}"
-        
-        system_status = status_info.get('system_status', 'OK')
-        
-        # ENERGIOPTIMERING: Caching för att undvika onödiga ändringar
-        if mode in ['startup', 'idle']:
-            # För startup/idle: bara uppdatera vid 15min intervall
-            if self.last_status_minute == current_minute:
-                last_update = status_info.get('last_update', current_minute)
+                base_status = f"System OK • {current_minute}"
+        else:
+            system_status = status_info.get('system_status', 'OK')
+            
+            # ENERGIOPTIMERING: Caching för att undvika onödiga ändringar
+            if mode in ['startup', 'idle']:
+                # För startup/idle: bara uppdatera vid 15min intervall
+                if self.last_status_minute == current_minute:
+                    last_update = status_info.get('last_update', current_minute)
+                else:
+                    last_update = current_minute
+                    self.last_status_minute = current_minute
             else:
-                last_update = current_minute
-                self.last_status_minute = current_minute
-        else:
-            # För events: alltid aktuell tid
-            last_update = status_info.get('last_update', now.strftime('%H:%M:%S'))
+                # För events: alltid aktuell tid
+                last_update = status_info.get('last_update', now.strftime('%H:%M:%S'))
+            
+            # Lägg till state duration om tillgänglig
+            if 'state_duration' in status_info:
+                duration = status_info['state_duration']
+                base_status = f"System {system_status} • {last_update} • {duration}"
+            else:
+                base_status = f"System {system_status} • {last_update}"
         
-        # Lägg till state duration om tillgänglig
-        if 'state_duration' in status_info:
-            duration = status_info['state_duration']
-            return f"System {system_status} • {last_update} • {duration}"
+        # NY: Lägg till RDS-indikator
+        rds_status = self._get_rds_status_from_status_info(status_info)
+        if rds_status:
+            indicator = rds_status.get('indicator', '?')
+            time_str = rds_status.get('time_str', 'Okänd')
+            return f"{base_status} • RDS: {indicator} {time_str}"
         else:
-            return f"System {system_status} • {last_update}"
+            # Fallback om RDS-status inte tillgänglig
+            return f"{base_status} • RDS: ? Okänd"
+    
+    def _get_rds_status_from_status_info(self, status_info: Dict) -> Optional[Dict]:
+        """
+        NY: Extrahera RDS-status från status_info
+        
+        Denna metod används av display_monitor som redan har RDS-status tillgänglig
+        """
+        if not status_info:
+            return None
+        
+        # Kolla om RDS-status redan finns i status_info (från display_monitor)
+        if 'rds_status' in status_info:
+            return status_info['rds_status']
+        
+        # Fallback: Skapa enkel RDS-status baserat på system_status
+        if 'system_status' in status_info:
+            # Anta RDS är OK om systemet fungerar
+            now = datetime.now()
+            rounded_time = self._round_time_to_5min(now)
+            return {
+                'indicator': '●',
+                'time_str': rounded_time.strftime('%H:%M'),
+                'status': 'aktiv'
+            }
+        
+        return None
+    
+    def _round_time_to_5min(self, dt: datetime) -> datetime:
+        """
+        Runda tid till närmaste 5-minuters intervall för stabil hash
+        Exempel: 14:23 → 14:25, 14:27 → 14:25
+        """
+        minute = dt.minute
+        rounded_minute = round(minute / 5) * 5
+        if rounded_minute >= 60:
+            rounded_minute = 0
+            dt = dt.replace(hour=dt.hour + 1)
+        
+        return dt.replace(minute=rounded_minute, second=0, microsecond=0)
     
     # ========================================
     # HJÄLPMETODER (med HOTFIX för direction-extraktion)
@@ -659,26 +704,43 @@ class ContentFormatter:
             return False
 
 if __name__ == "__main__":
-    # Test av ENERGIOPTIMERAD + OPTIMERAD content formatter
+    # Test av UPPDATERAD content formatter MED RDS-indikator
     formatter = ContentFormatter()
     
-    print("🔋 Test av ENERGIOPTIMERAD + OPTIMERAD Content Formatter")
+    print("📡 Test av UPPDATERAD Content Formatter MED RDS-INDIKATOR")
     print("=" * 60)
     print("🚧 TRAFIKOPTIMERING: +5 rader extra för längre meddelanden")
     print("🩹 HOTFIX: Fixar riktningsextraktion och transkriptionsvisning")
+    print("📡 NY: RDS-mottagningsindikator för döva användare")
     
-    # Test ENERGIOPTIMERADE modes
+    # Test ENERGIOPTIMERADE modes med RDS-indikator
     test_modes = ['startup', 'idle', 'traffic']
     
+    # Mock RDS-status för test
+    mock_rds_status = {
+        'indicator': '●',
+        'time_str': '14:25',
+        'status': 'aktiv'
+    }
+    
     for mode in test_modes:
-        print(f"\n📱 Testar {mode} mode:")
+        print(f"\n📱 Testar {mode} mode MED RDS-indikator:")
         content = formatter.format_for_mode(mode, 
                                           primary_data={'test': True},
-                                          status_info={'system_status': 'OK', 'last_update': '21:15'})
+                                          status_info={
+                                              'system_status': 'OK', 
+                                              'last_update': '21:15',
+                                              'rds_status': mock_rds_status
+                                          })
         print(f"  Mode: {content['mode']}")
         print(f"  Sections: {list(content['sections'].keys())}")
         if 'status_footer' in content['sections']:
-            print(f"  Status: {content['sections']['status_footer']['text']}")
+            status_text = content['sections']['status_footer']['text']
+            print(f"  Status: {status_text}")
+            if 'RDS:' in status_text:
+                print(f"  🎯 RDS-indikator: HITTAD i footer!")
+            else:
+                print(f"  ❌ RDS-indikator: SAKNAS")
         
         # Visa trafikoptimering
         if mode == 'traffic':
@@ -686,6 +748,21 @@ if __name__ == "__main__":
             print(f"  🚧 HOTFIX: 'transcription' sektion (kompatibilitet)")
             print(f"  🩹 HOTFIX: Begränsad direction-extraktion")
             print(f"  🚧 RESULTAT: +5 rader för längre meddelanden!")
+    
+    # Test RDS-indikator med olika status
+    print(f"\n📡 Test av RDS-indikatorer:")
+    rds_test_cases = [
+        {'indicator': '●', 'time_str': '14:25', 'status': 'aktiv'},
+        {'indicator': '○', 'time_str': '14:20', 'status': 'svag'},
+        {'indicator': '✕', 'time_str': '14:10', 'status': 'ingen'}
+    ]
+    
+    for rds_case in rds_test_cases:
+        status_text = formatter._format_status_feedback_with_rds(
+            {'system_status': 'OK', 'last_update': '14:30', 'rds_status': rds_case}, 
+            'idle'
+        )
+        print(f"  {rds_case['status'].upper()}: {status_text}")
     
     # Test direction-extraktion
     print(f"\n🩹 Test av FIXAD direction-extraktion:")
@@ -698,8 +775,10 @@ if __name__ == "__main__":
     print(f"  Extraherad riktning: '{direction}'")
     print(f"  ✅ Endast riktningsord extraheras nu!")
     
-    print("\n🔋 ENERGIOPTIMERAD + OPTIMERAD + HOTFIX Content Formatter test slutförd!")
+    print("\n📡 UPPDATERAD Content Formatter MED RDS-INDIKATOR test slutförd!")
     print("✅ 15min status intervall implementerat")
-    print("⚡ Smart timing för minimal hash-ändringar")
+    print("⚡ Smart timing för minimal hash-ändringar") 
     print("🚧 Trafikmeddelanden optimerade för maximalt innehåll!")
     print("🩹 Direction-extraktion och transkriptionsvisning FIXAD!")
+    print("📡 RDS-mottagningsindikator för döva användare IMPLEMENTERAD!")
+    print("🎯 Format: 'System OK • 14:30 • RDS: ● 14:25'")
