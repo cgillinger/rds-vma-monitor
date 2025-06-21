@@ -12,7 +12,7 @@ Detta system övervakar automatiskt Sveriges Radio P4 för att fånga upp nödut
 
 **Kritisk fördel: Ingen internet- eller mobilanslutning krävs.** Systemet fungerar helt offline och använder endast FM-radiomottagning. Detta gör det ovärderligt under kriser när internet och mobilnät kan vara opålitliga eller helt otillgängliga. Så länge du har adekvat FM-radiomottagning kommer systemet att fortsätta övervaka för nödutssändningar.
 
-Systemet är designat för döva och hörselskadade som behöver tillgång till kritisk säkerhetsinformation under kriser, men är användbart för alla som vill ha pålitlig krisinformation oberoende av internetinfrastruktur.
+Systemet är designat för döva och hörselskadade som behöver tillgång till kritisk säkerhetsinformation under kriser, men är användbart för alla som vill ha pålitlig krisinformation oberoende av internetinfrastruktur.Eftersom VMA skickas ut sällan i fredstid, så transkriberar och känner systemet också igen trafikmeddelanden.
 
 ### Viktiga funktioner
 
