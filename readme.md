@@ -14,6 +14,8 @@ Detta system övervakar automatiskt Sveriges Radio P4 för att fånga upp nödut
 
 Systemet är designat för döva och hörselskadade som behöver tillgång till kritisk säkerhetsinformation under kriser, men är användbart för alla som vill ha pålitlig krisinformation oberoende av internetinfrastruktur.Eftersom VMA skickas ut sällan i fredstid, så transkriberar och känner systemet också igen trafikmeddelanden.
 
+Koden är fri att använda - licens i slutet av det är dokumentet. 
+
 ### Viktiga funktioner
 
 - **Automatisk detektering av VMA-nödutssändningar** (PTY-koder 30/31)
@@ -280,8 +282,8 @@ E-paper-displayen ska visa aktuell systemstatus och indikera "RDS: ●" som bekr
 | **Antenn** | Teleskopantenn (SMA-anslutning) | **Inkl** | *Inkluderad med RTL-SDR* | För FM-mottagning |
 | **Lagring** | MicroSD 64GB+ (Class 10) | **200** | - | Höghastighetskort krävs |
 
-**Total kostnad: ~2177 kr** *(utan valfritt ljudgränssnitt - ursprungligen 3300 kr)*
-**Med ljudgränssnitt: ~2888 kr**
+**Total ungefärlig kostnad: ~2177 kr** *(utan valfritt ljudgränssnitt)*
+
 
 ### ℹ️ **Viktigt om ljudgränssnittet:**
 
