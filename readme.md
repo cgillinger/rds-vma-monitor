@@ -207,13 +207,13 @@ cd ~/rds_logger3
 rtl_test -t
 ```
 
-**Testa FM-ljudmottagning:**
+**Testa FM-ljudmottagning (VALFRITT för hörande användare):**
 ```bash
 rtl_fm -f 103.3M -s 200000 -g 30 - | aplay -r 22050 -f S16_LE
 ```
 **För hörande:** Du bör höra tydligt P4-ljud. Tryck Ctrl+C för att stoppa.
 
-**För döva/hörselskadade:** Öppna en ny terminal och kör detta kommando för att visuellt kontrollera att RDS-data tas emot:
+**För döva/hörselskadade (REKOMMENDERAT TEST):** Testa visuellt med RDS-data istället:
 ```bash
 # I ny terminal - visar RDS-data visuellt
 rtl_fm -f 103.3M -s 171000 -g 30 - | ~/redsea/build/redsea -r 171000
@@ -271,16 +271,39 @@ E-paper-displayen ska visa aktuell systemstatus och indikera "RDS: ●" som bekr
 
 **System testat på: Raspberry Pi 5 8GB RAM med Raspberry Pi OS**
 
-| Komponent | Rekommenderad modell | Pris (SEK) | Anteckningar |
-|-----------|---------------------|-------------|--------------|
-| **Dator** | Raspberry Pi 5 (8GB RAM) | 1200 | Verifierad fungerande konfiguration |
-| **SDR-radio** | RTL-SDR Blog V4 | 400 | Kräver speciella drivrutiner |
-| **Ljudgränssnitt** | Jabra EVOLVE 30 II USB-headset | 800 | USB-ljudenhet behövs |
-| **Display** | Waveshare 4.26" E-Paper HAT | 600 | 800x480 pixlar |
-| **Antenn** | Teleskopantenn (SMA-anslutning) | 100 | För FM-mottagning |
-| **Lagring** | MicroSD 64GB+ (Class 10) | 200 | Höghastighetskort krävs |
+| Komponent | Rekommenderad modell | Pris (SEK) | Direktlänk | Anteckningar |
+|-----------|---------------------|-------------|------------|--------------|
+| **Dator** | Raspberry Pi 5 (8GB RAM) | **1099** | [🛒 Amazon SE](https://www.amazon.se/dp/B0CT8HRP84) | Verifierad fungerande konfiguration |
+| **SDR-radio** | RTL-SDR Blog V4 med antennkit | **499** | [🛒 LOH Electronics](https://www.lohelectronics.se/kommunikation/amatorradio/radio/rtl-sdr-v4-r828d-rtl2832u-1ppm-tcxo-sma-software-defined-radio-with-dipole-antenna-kit) | Kräver speciella drivrutiner |
+| **Ljudgränssnitt** | Jabra EVOLVE 30 II USB-headset | **711** | [🛒 Kontorsgiganten](https://www.kontorsgiganten.se/headset-jabra-evolve-30-ii-usb-3-5mm-p-25) | **VALFRITT** - Endast för hörande användare |
+| **Display** | Waveshare 4.26" E-Paper HAT | **379** | [🛒 Amazon SE](https://www.amazon.se/dp/B0CK2FCG1K) | 800x480 pixlar |
+| **Antenn** | Teleskopantenn (SMA-anslutning) | **Inkl** | *Inkluderad med RTL-SDR* | För FM-mottagning |
+| **Lagring** | MicroSD 64GB+ (Class 10) | **200** | - | Höghastighetskort krävs |
 
-**Total kostnad: ~3300 SEK**
+**Total kostnad: ~2177 kr** *(utan valfritt ljudgränssnitt - ursprungligen 3300 kr)*
+**Med ljudgränssnitt: ~2888 kr**
+
+### ℹ️ **Viktigt om ljudgränssnittet:**
+
+**Ljudgränssnittet (headset) är VALFRITT** eftersom systemet är primärt designat för döva och hörselskadade användare. All kritisk information visas visuellt på e-paper displayen:
+
+- **VMA-meddelanden** transkriberas och visas på skärmen
+- **Trafikmeddelanden** transkriberas och visas på skärmen  
+- **RDS-mottagningsindikator** visar om systemet fungerar (● ○ ✕)
+- **Systemstatus** visas kontinuerligt på displayen
+
+**Headset behövs endast för:**
+- Hörande användare som vill lyssna på FM-radio under installation/testning
+- Verifiering av FM-mottagning under setup (kan göras visuellt med RDS-data istället)
+- Testning av ljudkvalitet (helt valfritt)
+
+### Alternativa svenska återförsäljare
+
+**För komponenter som inte finns på Amazon SE:**
+
+- **RTL-SDR Blog V4**: [Electrokit](https://www.electrokit.com/en/rtl-sdr-receiver-dongle-v4) - 499 SEK
+- **Waveshare Display**: [HiTechChain](https://hitechchain.se/en/iot/waveshare) - Officiell återförsäljare
+- **Jabra Headset**: [PriceRunner](https://www.pricerunner.se/pl/94-3734611/Hoerlurar-Gaming-Headsets/Jabra-Evolve-30-2-MS-Stereo-priser) - Prisjämförelse
 
 ### Kritiska hårdvaruanteckningar
 
@@ -409,18 +432,15 @@ cd ~/rds_logger3
 
 **Problem: Ingen RDS-data i loggar**
 ```bash
-# Testa FM-mottagning manuellt
-rtl_fm -f 103.3M -s 200000 -g 30 - | aplay -r 22050 -f S16_LE
-```
-
-**För hörande:** Du bör höra tydligt P4-ljud.
-
-**För döva/hörselskadade:** Testa visuellt med RDS-data:
-```bash
-# Visar RDS-data på skärmen istället för ljud
+# REKOMMENDERAT för alla användare: Testa visuellt med RDS-data
 rtl_fm -f 103.3M -s 171000 -g 30 - | ~/redsea/build/redsea -r 171000
 ```
 Du ska se RDS-data rulla förbi. Om inget visas:
+
+**VALFRITT för hörande användare: Testa FM-mottagning med ljud**
+```bash
+rtl_fm -f 103.3M -s 200000 -g 30 - | aplay -r 22050 -f S16_LE
+```
 # 1. Kontrollera antennanslutning
 # 2. Prova olika gain-värden (20-45)
 # 3. Justera antennposition
@@ -510,6 +530,7 @@ du -sh logs/ backup/
 - E-paper-display: Waveshare-teknologi
 
 **Skapad:** 2025-06-08  
-**Version:** 4.2 (Produktionsklar med förbättrad installationsguide)  
+**Version:** 4.3 (Produktionsklar med uppdaterade priser och direktlänkar)  
 **Designad för:** Svenskt nödutssändningssystem  
-**Testad på:** Raspberry Pi 5, RTL-SDR Blog V4, Waveshare 4.26" display
+**Testad på:** Raspberry Pi 5, RTL-SDR Blog V4, Waveshare 4.26" display  
+**Senast uppdaterad:** 2025-06-22 med aktuella svenska priser
