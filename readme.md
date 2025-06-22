@@ -14,7 +14,7 @@ Detta system övervakar automatiskt Sveriges Radio P4 för att fånga upp nödut
 
 Systemet är designat för döva och hörselskadade som behöver tillgång till kritisk säkerhetsinformation under kriser, men är användbart för alla som vill ha pålitlig krisinformation oberoende av internetinfrastruktur.Eftersom VMA skickas ut sällan i fredstid, så transkriberar och känner systemet också igen trafikmeddelanden.
 
-Koden är fri att använda - licens i slutet av det är dokumentet. 
+Koden är fri att använda - licens i slutet av det här dokumentet. 
 
 ### Viktiga funktioner
 
@@ -265,6 +265,100 @@ Du bör se regelbundna RDS-datauppdateringar.
 
 E-paper-displayen ska visa aktuell systemstatus och indikera "RDS: ●" som bekräftar att systemet tar emot RDS-data.
 
+### Steg 10: Konfigurera automatisk rensning (cleanup.py)
+
+**VIKTIGT: Detta steg förhindrar att lagringsutrymmet tar slut över tid**
+
+VMA-systemet genererar kontinuerligt loggar, ljudfiler, transkriptioner och säkerhetskopior. Utan automatisk rensning kommer systemet att fylla upp lagringen och sluta fungera.
+
+**Testa cleanup.py manuellt först:**
+```bash
+cd ~/rds_logger3
+
+# Visa vad som skulle rensas (dry-run)
+python3 cleanup.py --dry-run
+
+# Utför faktisk rensning
+python3 cleanup.py
+
+# Visa detaljerad statistik
+python3 cleanup.py --stats
+```
+
+**Konfigurera automatisk körning via cron:**
+```bash
+# Öppna crontab-redigerare
+crontab -e
+```
+
+**Lägg till dessa rader i crontab:**
+```bash
+# VMA System - Automatisk rensning varje dag kl 02:00
+0 2 * * * cd /home/$USER/rds_logger3 && /usr/bin/python3 cleanup.py >> /home/$USER/rds_logger3/logs/cleanup_$(date +\%Y\%m\%d).log 2>&1
+
+# VMA System - Veckovis djuprensning varje söndag kl 03:00  
+0 3 * * 0 cd /home/$USER/rds_logger3 && /usr/bin/python3 cleanup.py --deep-clean >> /home/$USER/rds_logger3/logs/cleanup_weekly_$(date +\%Y\%m\%d).log 2>&1
+```
+
+**Verifiera cron-konfiguration:**
+```bash
+# Lista aktiva cron-jobb
+crontab -l
+
+# Kontrollera att cron-tjänsten körs
+sudo systemctl status cron
+
+# Testa cron-kommandot manuellt
+cd ~/rds_logger3 && python3 cleanup.py --dry-run
+```
+
+**Cleanup-inställningar (config.py):**
+
+Cleanup-beteendet styrs av inställningar i `config.py`. De viktiga värdena är:
+
+```python
+# Cleanup-inställningar (dagar)
+CLEANUP_SETTINGS = {
+    'keep_logs_days': 30,           # Behåll systemloggar i 30 dagar
+    'keep_audio_days': 7,           # Behåll ljudfiler i 7 dagar  
+    'keep_transcriptions_days': 30, # Behåll transkriptioner i 30 dagar
+    'keep_backups_days': 14,        # Behåll säkerhetskopior i 14 dagar
+    'keep_screenshots_days': 7,     # Behåll skärmdumpar i 7 dagar
+    'max_log_size_mb': 100,         # Rotera loggar över 100MB
+    'emergency_cleanup_mb': 500     # Nödrensning vid <500MB kvar
+}
+```
+
+**Anpassa inställningar efter behov:**
+```bash
+# Redigera cleanup-inställningar
+nano ~/rds_logger3/config.py
+
+# Sök efter CLEANUP_SETTINGS och justera värden
+```
+
+**Övervaka cleanup-aktivitet:**
+```bash
+# Visa senaste cleanup-logg
+tail -f logs/cleanup_$(date +%Y%m%d).log
+
+# Kontrollera lagringsutnyttjande
+df -h
+du -sh logs/ backup/
+
+# Visa cleanup-statistik
+python3 cleanup.py --stats --verbose
+```
+
+**Vad cleanup.py gör:**
+- **Tar bort gamla loggar** äldre än inställda dagar
+- **Rensar ljudfiler** som redan transkriberats och är gamla
+- **Organiserar säkerhetskopior** och tar bort gamla
+- **Roterar stora loggfiler** för att spara utrymme
+- **Nödrensning** vid lågt lagringsutrymme
+- **Behåller alltid** senaste VMA-inspelningar oavsett ålder
+- **Skapar rensningsrapporter** för övervakning
+
 ---
 
 ## Hårdvarukrav
@@ -443,10 +537,14 @@ Du ska se RDS-data rulla förbi. Om inget visas:
 ```bash
 rtl_fm -f 103.3M -s 200000 -g 30 - | aplay -r 22050 -f S16_LE
 ```
-# 1. Kontrollera antennanslutning
-# 2. Prova olika gain-värden (20-45)
-# 3. Justera antennposition
-# 4. Verifiera korrekt frekvens för din plats
+
+**För hörande:** Du bör höra tydligt P4-ljud med ljudtestet.
+
+**Felsökning för alla användare:**
+1. Kontrollera antennanslutning
+2. Prova olika gain-värden (20-45)
+3. Justera antennposition
+4. Verifiera korrekt frekvens för din plats
 
 ### Displayproblem
 
