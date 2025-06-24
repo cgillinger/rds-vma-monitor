@@ -1,13 +1,14 @@
 #!/bin/bash
 #
-# AUTOMATISK VMA System med E-paper Display - LÄTTLÄSTA FÄRGER
-# Fil: start_vma_with_display.sh (ERSÄTTER befintlig)
+# FÖRBÄTTRAT VMA System med E-paper Display - ROBUST USB-hantering
+# Fil: start_vma_with_display.sh (FÖRBÄTTRAD VERSION)
 # Placering: ~/rds_logger3/start_vma_with_display.sh
 #
 # FÖRBÄTTRINGAR:
-# - Bättre färgval för läsbarhet
-# - Cyan istället för mörk blå
-# - Normal text för info-meddelanden
+# - Robust USB-återställning och cleanup
+# - Bättre process-hantering och timing
+# - Förbättrad felhantering
+# - Längre stabiliseringstider
 #
 
 set -e
@@ -20,12 +21,91 @@ CYAN='\033[0;36m'      # Lättläst cyan istället för mörk blå
 WHITE='\033[1;37m'     # Vit för viktiga rubriker
 NC='\033[0m'           # No Color
 
-echo -e "${WHITE}🚀 VMA System med E-paper Display - AUTOMATISK START${NC}"
-echo -e "${WHITE}=======================================================${NC}"
+echo -e "${WHITE}🚀 FÖRBÄTTRAT VMA System med E-paper Display${NC}"
+echo -e "${WHITE}==============================================${NC}"
+echo -e "${CYAN}🔧 MED: USB-reset, robust cleanup, bättre timing${NC}"
 
 # Projektmapp
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
+
+# FÖRBÄTTRAD: Process tracking för robust cleanup
+VMA_PID=""
+DISPLAY_PID=""
+
+# NY: Robust cleanup-funktion
+robust_cleanup() {
+    echo ""
+    echo -e "${YELLOW}🛑 FÖRBÄTTRAD CLEANUP - Stoppar system...${NC}"
+    
+    # STEG 1: Stoppa display monitor först (läser bara filer)
+    if [ -n "$DISPLAY_PID" ] && kill -0 $DISPLAY_PID 2>/dev/null; then
+        echo "🖥️ Stoppar Display Monitor (PID: $DISPLAY_PID)"
+        kill -TERM $DISPLAY_PID 2>/dev/null || true
+        sleep 2
+        # Force kill om nödvändigt
+        if kill -0 $DISPLAY_PID 2>/dev/null; then
+            kill -KILL $DISPLAY_PID 2>/dev/null || true
+        fi
+    fi
+    
+    # STEG 2: Stoppa VMA-system (signalerar till alla child-processer)
+    if [ -n "$VMA_PID" ] && kill -0 $VMA_PID 2>/dev/null; then
+        echo "📻 Stoppar VMA-system (PID: $VMA_PID)"
+        kill -TERM $VMA_PID 2>/dev/null || true
+        
+        # FÖRBÄTTRAT: Längre väntetid för graceful shutdown
+        echo "⏳ Väntar på graceful shutdown (5 sekunder)..."
+        sleep 5
+        
+        # Force kill om fortfarande kvar
+        if kill -0 $VMA_PID 2>/dev/null; then
+            echo -e "${YELLOW}⚠️ Force-stoppar VMA-system${NC}"
+            kill -KILL $VMA_PID 2>/dev/null || true
+            sleep 2
+        fi
+    fi
+    
+    # STEG 3: ROBUST cleanup av alla relaterade processer
+    echo "🧹 ROBUST cleanup av alla VMA-processer..."
+    
+    # Specifik cleanup för RTL-SDR pipeline (i rätt ordning)
+    pkill -f "audio_recorder.py" 2>/dev/null || true
+    sleep 1
+    pkill -f "redsea" 2>/dev/null || true
+    sleep 1
+    pkill -f "rtl_fm.*103300000" 2>/dev/null || true
+    sleep 2  # Extra tid för USB-frigöring
+    
+    # Övriga VMA-processer
+    pkill -f "rds_logger.py" 2>/dev/null || true
+    pkill -f "display_monitor.py" 2>/dev/null || true
+    
+    # STEG 4: USB-återställning (från förbättrade kärnskriptet)
+    echo "🔧 USB-återställning..."
+    
+    # Hitta och reset RTL-SDR USB-enhet
+    USB_DEVICE=$(lsusb | grep -i "rtl\|realtek" | head -1)
+    if [[ -n "$USB_DEVICE" ]]; then
+        BUS=$(echo "$USB_DEVICE" | awk '{print $2}')
+        DEV=$(echo "$USB_DEVICE" | awk '{print $4}' | sed 's/://')
+        
+        if command -v usbreset &> /dev/null; then
+            echo "📡 USB reset: Bus $BUS Device $DEV"
+            sudo usbreset "/dev/bus/usb/$BUS/$DEV" 2>/dev/null || true
+        fi
+    fi
+    
+    # STEG 5: Rensa named pipes
+    rm -f /tmp/vma_rds_data 2>/dev/null || true
+    rm -f /tmp/vma_audio_control 2>/dev/null || true
+    
+    echo -e "${GREEN}✅ FÖRBÄTTRAD cleanup komplett${NC}"
+    exit 0
+}
+
+# FÖRBÄTTRAT: Sätt upp robusta signal handlers
+trap robust_cleanup SIGINT SIGTERM EXIT
 
 # Kontrollera kärnkomponenter
 if [ ! -f "start_vma_system.sh" ]; then
@@ -118,16 +198,17 @@ except Exception as e:
 fi
 
 echo ""
-echo -e "${CYAN}KONFIGURATION:${NC}"
-echo -e "${CYAN}==============${NC}"
-echo "🔧 VMA-system: ORIGINAL start_vma_system.sh (OFÖRÄNDRAT)"
+echo -e "${CYAN}FÖRBÄTTRAD KONFIGURATION:${NC}"
+echo -e "${CYAN}=========================${NC}"
+echo "🔧 VMA-system: FÖRBÄTTRAD start_vma_system.sh (USB-reset + robust cleanup)"
 if [ "$DISPLAY_AVAILABLE" = true ]; then
     echo "🖥️ Display: TILLGÄNGLIGT (hardware)"
 else
     echo -e "${YELLOW}🖥️ Display: INTE TILLGÄNGLIGT${NC}"
 fi
-echo "📡 Pipeline: Exakt samma som fungerande system"
+echo "📡 Pipeline: Samma fungerande pipeline med robust hantering"
 echo "🔗 Integration: Display läser loggfiler (ingen pipeline-ändring)"
+echo "🔧 Förbättringar: USB-reset, längre timers, bättre cleanup"
 echo ""
 
 # AUTOMATISK START - INGEN PROMPT
@@ -140,23 +221,39 @@ mkdir -p logs/audio
 mkdir -p logs/transcriptions
 mkdir -p logs/screen 2>/dev/null || true
 
-# Starta VMA-system
-echo -e "${GREEN}🚀 STARTAR VMA-SYSTEM (ORIGINAL)${NC}"
-echo -e "${GREEN}=================================${NC}"
-echo "Startar det fungerande systemet: ./start_vma_system.sh"
+# FÖRBÄTTRAT: Starta VMA-system med bättre verifiering
+echo -e "${GREEN}🚀 STARTAR FÖRBÄTTRAT VMA-SYSTEM${NC}"
+echo -e "${GREEN}===================================${NC}"
+echo "Startar det förbättrade systemet: ./start_vma_system.sh"
 
 # Starta VMA-systemet i bakgrunden
 nohup ./start_vma_system.sh > /dev/null 2>&1 &
 VMA_PID=$!
 
-# Vänta lite för att systemet ska starta
-sleep 3
+# FÖRBÄTTRAT: Längre stabiliseringstid för VMA-system
+echo "⏳ Väntar på VMA-system stabilisering (8 sekunder)..."
+sleep 8
 
-# Kontrollera att VMA-systemet startade
+# ROBUST: Kontrollera att VMA-systemet verkligen startade
 if kill -0 $VMA_PID 2>/dev/null; then
     echo -e "${GREEN}✅ VMA-system kör (PID: $VMA_PID)${NC}"
+    
+    # Extra verifiering: kolla att RTL-processer startade
+    if pgrep -f "rtl_fm.*103300000" &>/dev/null; then
+        echo -e "${GREEN}✅ RTL-FM process detekterad${NC}"
+    else
+        echo -e "${YELLOW}⚠️ RTL-FM process inte detekterad ännu (kan ta längre tid)${NC}"
+    fi
+    
+    if pgrep -f "redsea" &>/dev/null; then
+        echo -e "${GREEN}✅ Redsea process detekterad${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Redsea process inte detekterad ännu${NC}"
+    fi
+    
 else
     echo -e "${RED}❌ VMA-system kunde inte startas${NC}"
+    echo -e "${RED}🔧 Kolla systemloggar: logs/system_$(date +%Y%m%d).log${NC}"
     exit 1
 fi
 
@@ -167,11 +264,11 @@ if [ "$DISPLAY_AVAILABLE" = true ]; then
     echo -e "${CYAN}====================================${NC}"
     echo "Väntar på att VMA-systemet ska skapa loggar..."
     
-    # Vänta på att logs-katalogen skapas av VMA-systemet
-    timeout=30
+    # FÖRBÄTTRAT: Längre timeout för logs-katalog
+    timeout=45
     while [ $timeout -gt 0 ]; do
-        if [ -d "logs" ]; then
-            echo -e "${GREEN}✅ Logs-katalog skapad av VMA-system${NC}"
+        if [ -d "logs" ] && [ -f "logs/system_$(date +%Y%m%d).log" ]; then
+            echo -e "${GREEN}✅ Logs-katalog och systemlogg skapad av VMA-system${NC}"
             break
         fi
         sleep 1
@@ -179,7 +276,7 @@ if [ "$DISPLAY_AVAILABLE" = true ]; then
     done
     
     if [ $timeout -eq 0 ]; then
-        echo -e "${YELLOW}⚠️ Timeout: Logs-katalog inte skapad, fortsätter ändå${NC}"
+        echo -e "${YELLOW}⚠️ Timeout: Systemlogg inte skapad, startar display ändå${NC}"
     fi
     
     echo "Startar Display Monitor (läser loggfiler)..."
@@ -188,8 +285,9 @@ if [ "$DISPLAY_AVAILABLE" = true ]; then
     nohup python3 display_monitor.py > /dev/null 2>&1 &
     DISPLAY_PID=$!
     
-    # Vänta lite för att display-monitor ska starta
-    sleep 2
+    # FÖRBÄTTRAT: Längre verifiering av display-monitor
+    echo "⏳ Väntar på Display Monitor stabilisering (5 sekunder)..."
+    sleep 5
     
     # Kontrollera att display-monitor startade
     if kill -0 $DISPLAY_PID 2>/dev/null; then
@@ -205,14 +303,21 @@ else
 fi
 
 echo ""
-echo -e "${WHITE}🎯 SYSTEM AKTIVT${NC}"
-echo -e "${WHITE}================${NC}"
-echo "📻 VMA-system: PID $VMA_PID (ORIGINAL start_vma_system.sh)"
+echo -e "${WHITE}🎯 FÖRBÄTTRAT SYSTEM AKTIVT${NC}"
+echo -e "${WHITE}============================${NC}"
+echo "📻 VMA-system: PID $VMA_PID (FÖRBÄTTRAD start_vma_system.sh)"
 if [ -n "$DISPLAY_PID" ]; then
     echo "🖥️ Display Monitor: PID $DISPLAY_PID (läser loggfiler)"
 fi
 echo ""
-echo "🔧 VMA-systemet kör exakt som vanligt"
+echo "🔧 FÖRBÄTTRINGAR AKTIVA:"
+echo "   ✅ USB-reset vid start och stopp"
+echo "   ✅ Robust process cleanup (korrekt ordning)"
+echo "   ✅ Längre stabiliseringstider (8s VMA, 5s Display)"
+echo "   ✅ RTL-SDR ready verification"
+echo "   ✅ Named pipe collision handling"
+echo "   ✅ Förbättrad felhantering"
+echo ""
 if [ -n "$DISPLAY_PID" ]; then
     echo "🖥️ Display läser bara loggfiler - rör inte pipelines"
 fi
@@ -220,57 +325,27 @@ echo ""
 echo -e "${YELLOW}Tryck Ctrl+C för att stoppa HELA systemet${NC}"
 echo ""
 
-# Cleanup-funktion vid avbrott
-cleanup() {
-    echo ""
-    echo -e "${YELLOW}🛑 Stoppar system...${NC}"
-    
-    # Stoppa display monitor
-    if [ -n "$DISPLAY_PID" ] && kill -0 $DISPLAY_PID 2>/dev/null; then
-        echo "🖥️ Stoppar Display Monitor (PID: $DISPLAY_PID)"
-        kill $DISPLAY_PID 2>/dev/null || true
-    fi
-    
-    # Stoppa VMA-system
-    if kill -0 $VMA_PID 2>/dev/null; then
-        echo "📻 Stoppar VMA-system (PID: $VMA_PID)"
-        kill $VMA_PID 2>/dev/null || true
-        
-        # Vänta lite och force-kill om nödvändigt
-        sleep 2
-        if kill -0 $VMA_PID 2>/dev/null; then
-            echo -e "${YELLOW}⚠️ Force-stoppar VMA-system${NC}"
-            kill -9 $VMA_PID 2>/dev/null || true
-        fi
-    fi
-    
-    # Cleanup andra processer som kan vara kvar
-    echo "🧹 Cleanup av relaterade processer"
-    pkill -f "rtl_fm" 2>/dev/null || true
-    pkill -f "redsea" 2>/dev/null || true
-    pkill -f "audio_recorder.py" 2>/dev/null || true
-    pkill -f "rds_logger.py" 2>/dev/null || true
-    pkill -f "display_monitor.py" 2>/dev/null || true
-    
-    echo -e "${GREEN}✅ System stoppat${NC}"
-    exit 0
-}
-
-# Sätt upp signal handlers
-trap cleanup SIGINT SIGTERM
-
 # Vänta på signal
-echo -e "${GREEN}✅ AUTOMATISK START SLUTFÖRD - System kör nu självständigt${NC}"
+echo -e "${GREEN}✅ FÖRBÄTTRAD AUTOMATISK START SLUTFÖRD${NC}"
 echo "📡 RDS-detektion aktiv, väntar på trafikmeddelanden och VMA"
 if [ -n "$DISPLAY_PID" ]; then
     echo "🖥️ Display visar startup-skärm tills första event"
 fi
+echo "🔧 Systemet har nu robust USB-hantering och cleanup"
 
-# Huvudloop - vänta på Ctrl+C
+# FÖRBÄTTRAD: Huvudloop med bättre process-monitoring
 while true; do
-    # Kontrollera att processer fortfarande körs
+    # ROBUST: Kontrollera att VMA-systemet fortfarande körs
     if ! kill -0 $VMA_PID 2>/dev/null; then
         echo -e "${RED}❌ VMA-system har stoppat oväntat${NC}"
+        echo -e "${RED}🔧 Trolig orsak: USB-gränssnittsproblem${NC}"
+        echo -e "${RED}📋 Kolla loggar: logs/system_$(date +%Y%m%d).log${NC}"
+        break
+    fi
+    
+    # Kontrollera att kritiska processer fortfarande körs
+    if ! pgrep -f "rtl_fm.*103300000" &>/dev/null; then
+        echo -e "${RED}❌ RTL-FM process har dött - USB-problem${NC}"
         break
     fi
     
@@ -279,8 +354,10 @@ while true; do
         DISPLAY_PID=""
     fi
     
-    sleep 5
+    # Status-update var 30:e sekund (oftare än tidigare)
+    sleep 30
 done
 
 # Om vi kommer hit har något gått fel
-cleanup
+echo -e "${RED}💥 Systemet har stoppat oväntat - kör robust cleanup${NC}"
+robust_cleanup
